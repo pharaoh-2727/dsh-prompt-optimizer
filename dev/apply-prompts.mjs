@@ -27,22 +27,6 @@ const ROOT = join(HERE, '..')
 const PLUGIN = join(ROOT, 'index.js')
 const PROMPTS_DIR = process.argv[2] || join(HERE, 'prompts')
 
-const SCENE_MARK = 'DSH 场景约定（'
-const COMMON_MARK = '公共规则（三档都适用'
-
-function splitPrompt(prompt) {
-  const sceneIdx = prompt.indexOf(SCENE_MARK)
-  const commonIdx = prompt.indexOf(COMMON_MARK)
-  if (sceneIdx < 0 || commonIdx < 0 || commonIdx < sceneIdx) {
-    throw new Error('提示词里找不到 DSH 场景约定 / 公共规则 的分界标记')
-  }
-  return {
-    tier: prompt.slice(0, sceneIdx).trimEnd(),
-    scene: prompt.slice(sceneIdx, commonIdx).trim(),
-    common: prompt.slice(commonIdx).trim(),
-  }
-}
-
 /** 生成 index.js 里那种单引号风格的数组字面量。 */
 function quoteLines(text, indent) {
   return text.split('\n').map((line) => {
@@ -58,9 +42,13 @@ let source = readFileSync(PLUGIN, 'utf8')
 const notes = []
 
 /* ---------- 1. 共用段：shared-scene.txt / shared-common.txt ---------- */
-for (const [file, constName, marker] of [
-  ['shared-scene.txt', 'DSH_SCENE', SCENE_MARK],
-  ['shared-common.txt', 'COMMON', COMMON_MARK],
+//
+// 场景约定的常量名是 SCENE_TEMPLATE（模板，带 {{workspace}} / {{environment}} 占位符），
+// 不是成品文字 —— 成品由 dshScene(context) 在每次调用时渲染。
+// 这里写回的必须是**模板**，否则本机路径会被烤进仓库。
+for (const [file, constName] of [
+  ['shared-scene.txt', 'SCENE_TEMPLATE'],
+  ['shared-common.txt', 'COMMON'],
 ]) {
   const path = join(PROMPTS_DIR, file)
   let text
@@ -96,20 +84,15 @@ for (const item of items) {
     notes.push(`在 index.js 里找不到 id: '${item.id}'，跳过`)
     continue
   }
-  const promptAt = source.indexOf('prompt: [', idAt)
+  const promptAt = source.indexOf('tierPrompt: [', idAt)
   const endAt = source.indexOf("].join('\\n'),", promptAt)
   if (promptAt < 0 || endAt < 0) {
-    notes.push(`找不到 ${item.id} 的 prompt 数组边界，跳过`)
+    notes.push(`找不到 ${item.id} 的 tierPrompt 数组边界，跳过`)
     continue
   }
-  const body = [
-    ...quoteLines(text, '      '),
-    "      ''",
-    '      DSH_SCENE',
-    "      ''",
-    '      COMMON',
-  ].join(',\n')
-  const block = `prompt: [\n${body},\n    ].join('\\n'),`
+  // 只写回「本档专属规则」。场景约定与公共规则不在这里 ——
+  // 它们由 renderPrompt() 在读取时拼上去，所以不会在每档里各存一份副本。
+  const block = `tierPrompt: [\n${quoteLines(text, '      ').join(',\n')},\n    ].join('\\n'),`
   source = source.slice(0, promptAt) + block + source.slice(endAt + "].join('\\n'),".length)
   console.log(`[${item.id}] 已写回 ${text.split('\n').length} 行专属规则`)
 }

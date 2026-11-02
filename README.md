@@ -89,7 +89,7 @@ DSH_FREE_CHANNEL_MODEL=your-model                    # 可选，默认 DeepSeek-
 
 ```bash
 npm run check        # 两个入口文件的语法检查
-npm test             # 9 套离线测试（约 5 秒）
+npm test             # 11 套离线测试（约 6 秒）
 ```
 
 测试不依赖 DSH 在跑：宿主半区用假 `ctx`，客户端半区用最小 React 桩 + 微型渲染器直接跑 `client.js`。跑测试时 `DSH_PROFILE_DIR` 会被清掉，需要的默认模型由 `dev/stub-model.cjs` 现场造 —— 所以同一份测试在别人的机器上也该是绿的。

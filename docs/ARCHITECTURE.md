@@ -24,7 +24,7 @@
 这是整个插件最重要的一条约束：
 
 ```js
-// index.js:953
+// index.js:1045
 async function optimizeText({ text, sessionId, agent, signal, hooks })
   → { ok, text, provider, model, style, source, recovered, adjusted, freeChannel }
 ```
@@ -34,12 +34,45 @@ async function optimizeText({ text, sessionId, agent, signal, hooks })
 | 入口 | 注册位置 | 与引擎的关系 |
 |---|---|---|
 | 输入框按钮 / 标题按钮 / Alt+O | `client.js` → HTTP | 打 `/stream` |
-| `/optimize <文字>` | `index.js:1526` `ctx.inject(['commands'])` | 直接调 `optimizeText()` |
-| `optimize_prompt` 工具 | `index.js:1568` `ctx.inject(['tools'])` | 直接调 `optimizeText()` |
-| `promptOptimizer` 服务 | `index.js:1625` `ctx.provide()` | 直接调 `optimizeText()` |
+| `/optimize <文字>` | `index.js:1748` `ctx.inject(['commands'])` | 直接调 `optimizeText()` |
+| `optimize_prompt` 工具 | `index.js:1790` `ctx.inject(['tools'])` | 直接调 `optimizeText()` |
+| `promptOptimizer` 服务 | `index.js:1848` `ctx.provide()` | 直接调 `optimizeText()` |
 
 为什么必须收敛：`/stream` 曾经自己拼了一遍 `ctx.llm.stream`，绕过了档位复核和免费通道回退，
 于是「客户端路径」和「命令路径」对同一输入给出不同结果。`dev/test-stream-parity.cjs` 专门钉住这一点。
+
+## 提示词怎么组装
+
+三档的提示词 = 档位规则 + 场景约定 + 公共规则，拼装在 `renderPrompt(item, context)` 内完成。
+
+**场景约定带两个运行时占位符**，由 `dshScene(context)` 在每次调用时填：
+
+| 占位符 | 值从哪来 | 拿不到时 |
+|---|---|---|
+| `{{workspace}}` | 宿主 `workingDirectory.get(session)` → 会话 header 的 `cwd` → `workingDirectory.defaultDirectory` | 那一行整行删掉，**不编造路径** |
+| `{{environment}}` | `describeEnvironment()` 按 `process.platform` 生成 | 永远有值，不用兜底 |
+
+早先场景约定是一段常量，第 1 条说「相对路径相对工作区根目录解析」但代码从不读工作区，
+第 5 条写死「本机是 Windows，终端是 PowerShell」换台 Linux 也照说。`dev/test-scene-context.cjs` 钉住现在的行为。
+
+`STYLE_ITEMS[i].prompt` 是 getter，返回**静态渲染**（没有会话上下文）——
+设置页显示的就是它，与实际发给模型的那份同源，只差工作区那一行。
+
+## 错误码
+
+回执里的 `code` 是稳定契约，`error` 文案随时可改。两条路都带：
+
+| code | HTTP | 含义 |
+|---|---|---|
+| `EMPTY_INPUT` | 400 | 空或全空白 |
+| `TOO_LONG` | 400 | 超过 20000 字符 |
+| `EMPTY_OUTPUT` | 502 | 模型没吐正文 |
+| `ABORTED` | 499 | 用户取消 |
+| `IN_FLIGHT` | 409 | 同一 requestId 已在跑 |
+| `UNKNOWN` | 500 | 其它 |
+
+前置校验（空、超长）发生在开流之前，走 HTTP + JSON；生成中途失败才推 `error` 事件。
+客户端把 code 挂在异常上，判断不依赖中文文案。
 
 ## 改写引擎内部
 
@@ -163,7 +196,7 @@ const STYLE_BANDS = {
 
 ```
 .
-├── index.js            宿主半区（~1700 行）
+├── index.js            宿主半区（~1900 行）
 ├── client.js           客户端半区（~3700 行）
 ├── cordis.patch.yml    bundle patch：声明插件的 id 与包名
 ├── package.json        版本、exports、dsh 元数据
@@ -171,7 +204,7 @@ const STYLE_BANDS = {
 │   ├── run-all.cjs         一键跑全部测试
 │   ├── stub-model.cjs      测试用的默认模型桩
 │   ├── smoke-host.cjs      宿主半区冒烟
-│   ├── test-*.cjs          9 套行为测试
+│   ├── test-*.cjs          11 套行为测试
 │   ├── dump-prompts.mjs    index.js → prompts/*.txt
 │   ├── apply-prompts.mjs   prompts/*.txt → index.js
 │   └── prompts/            三档提示词的可编辑源文件

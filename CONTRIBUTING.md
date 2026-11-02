@@ -8,7 +8,7 @@
 git clone https://github.com/pharaoh-2727/dsh-prompt-optimizer.git
 cd dsh-prompt-optimizer
 npm run check    # 语法检查
-npm test         # 9 套离线测试，约 5 秒
+npm test         # 11 套离线测试，约 6 秒
 ```
 
 不需要 `npm install` —— 项目没有运行时依赖，也不需要构建。

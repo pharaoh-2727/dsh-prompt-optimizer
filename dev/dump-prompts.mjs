@@ -20,51 +20,34 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const PLUGIN = join(HERE, '..', 'index.js')
 const OUT = process.argv[2] || join(HERE, 'prompts')
 
-const SCENE_MARK = 'DSH 场景约定（'
-const COMMON_MARK = '公共规则（三档都适用'
-
-function splitPrompt(prompt) {
-  const sceneIdx = prompt.indexOf(SCENE_MARK)
-  const commonIdx = prompt.indexOf(COMMON_MARK)
-  if (sceneIdx < 0 || commonIdx < 0 || commonIdx < sceneIdx) {
-    throw new Error('提示词里找不到 DSH 场景约定 / 公共规则 的分界标记')
-  }
-  return {
-    tier: prompt.slice(0, sceneIdx).trimEnd(),
-    scene: prompt.slice(sceneIdx, commonIdx).trim(),
-    common: prompt.slice(commonIdx).trim(),
-  }
-}
-
 const mod = await import(pathToFileURL(PLUGIN).href + '?v=' + Date.now())
 const items = mod.STYLE_ITEMS
 
 mkdirSync(OUT, { recursive: true })
 
-const parts = items.map((item) => ({ item, parts: splitPrompt(item.prompt) }))
-
-// 共用段：取第一档的，写一次
-const first = parts[0].parts
-const sharedScene = first.scene
-const sharedCommon = first.common
-for (const { item, parts: p } of parts) {
-  if (p.scene !== sharedScene) {
-    console.warn(`注意：${item.id} 的 DSH 场景约定与 ${items[0].id} 不一致，已按 ${items[0].id} 导出共用段。`)
-  }
-  if (p.common !== sharedCommon) {
-    console.warn(`注意：${item.id} 的公共规则与 ${items[0].id} 不一致，已按 ${items[0].id} 导出共用段。`)
-  }
-}
+/*
+ * 三段内容都**直接问插件要**，不再从拼好的提示词里按标记切。
+ *
+ * 早先是从 item.prompt 里 indexOf('DSH 场景约定（') 切开；那只在场景约定
+ * 是一段写死的常量时成立。现在场景约定带 {{workspace}} / {{environment}}
+ * 两个运行时占位符，切出来的会是**填好值的成品**，写回文件就把本机路径
+ * 烤进仓库了。所以改成读模板本身。
+ */
+const sharedScene = mod.SCENE_TEMPLATE
+const sharedCommon = mod.COMMON
 
 writeFileSync(join(OUT, 'shared-scene.txt'), sharedScene + '\n', 'utf8')
 writeFileSync(join(OUT, 'shared-common.txt'), sharedCommon + '\n', 'utf8')
-console.log(`wrote shared-scene.txt  (${sharedScene.split('\n').length} lines)`)
+console.log(`wrote shared-scene.txt  (${sharedScene.split('\n').length} lines, 含运行时占位符)`)
 console.log(`wrote shared-common.txt (${sharedCommon.split('\n').length} lines)`)
 
-for (const { item, parts: p } of parts) {
-  writeFileSync(join(OUT, `${item.id}.txt`), p.tier + '\n', 'utf8')
+for (const item of items) {
+  const tier = item.tierPrompt
+  writeFileSync(join(OUT, `${item.id}.txt`), tier + '\n', 'utf8')
+  // effective-* 是「这一档会发出去什么」的参考全文，用静态渲染（没有会话上下文），
+  // 因此里面的工作区那一行是空的 —— 与设置页显示的内容完全一致。
   writeFileSync(join(OUT, `effective-${item.id}.txt`), item.prompt + '\n', 'utf8')
-  console.log(`wrote ${item.id}.txt (${p.tier.split('\n').length} lines) + effective-${item.id}.txt (${item.prompt.split('\n').length} lines)`)
+  console.log(`wrote ${item.id}.txt (${tier.split('\n').length} lines) + effective-${item.id}.txt (${item.prompt.split('\n').length} lines)`)
 }
 
 // tiers.json 是三档的元数据（供选择器/加载器读取）。

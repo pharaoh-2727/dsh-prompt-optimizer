@@ -3,6 +3,28 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **场景约定接了真实上下文**：DSH 场景约定里那两条原先写死的说明，现在按这次请求的
+  真实情况渲染 —— 会话工作区路径、本机操作系统与终端。拿不到工作区时整行删掉，
+  **不编造路径**；设置页显示的提示词与实际发给模型的提示词同源
+- **错误回执带错误码**：`EMPTY_INPUT` / `TOO_LONG` / `EMPTY_OUTPUT` / `ABORTED` / `IN_FLIGHT` /
+  `UNKNOWN`。一次性路由、流式事件、客户端抛出的异常三处都有，判断不再依赖中文文案
+
+### 修复
+
+- 系统提示里的 `{{workspace}}` / `{{environment}}` 占位符不会外泄；
+  换台 Linux 机器不会再告诉模型「本机是 Windows，终端是 PowerShell」
+
+### 测试
+
+- 新增 `dev/test-scene-context.cjs`：三档 × 有/无工作区 × 环境行，钉住渲染规则
+- 新增 `dev/test-brute-force.cjs`：210 项，三档 × 13 类输入 × 五个入口，
+  错误路径、异常路径、错误码一致性
+- `dev/run-all.cjs` 的 ORDER 补齐新文件，跑的顺序不再依赖文件名排序
+
 ## [0.1.1] - 2026-11-02
 
 修掉 0.1.0 里两件会让人困惑的事：优化结果会在流式输出中途无声换成另一版；

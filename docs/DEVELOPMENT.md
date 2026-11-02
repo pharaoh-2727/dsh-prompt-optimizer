@@ -7,7 +7,7 @@
 
 ```bash
 npm run check     # 两个入口文件的语法检查
-npm test          # 9 套离线测试，约 5 秒
+npm test          # 11 套离线测试，约 6 秒
 ```
 
 ## 测试
@@ -25,6 +25,8 @@ npm test          # 9 套离线测试，约 5 秒
 | `test-preview-flow.cjs` | 预览卡确认、编辑竞态保护、取消、历史与对比、浮层收起 |
 | `test-multi-entry.cjs` | 会话头按钮、Alt+O、裸 `/optimize` 装饰、卸载时快捷键摘掉 |
 | `test-result-stability.cjs` | 末次 `delta` 等于 `done.text`；换稿前必有 `revise` 并说明原因；一次写对时不重试 |
+| `test-scene-context.cjs` | 场景约定随会话工作区与 `process.platform` 渲染；拿不到工作区时不编造、不留占位符 |
+| `test-brute-force.cjs` | 暴力测试：三档 × 13 类输入 × 五个入口，错误路径、异常路径、错误码一致性（210 项） |
 
 ### 测试怎么在没有 DSH 的情况下跑
 
@@ -132,7 +134,7 @@ gh release create vX.Y.Z --title "vX.Y.Z —— 一句话说清这版是什么" 
 ## 提交前自查
 
 - [ ] `npm run check` 通过
-- [ ] `npm test` 全绿（9 套）
+- [ ] `npm test` 全绿（11 套）
 - [ ] 没有把本机绝对路径写进源码或测试
 - [ ] 没有提交任何密钥（`.env`、`settings.json` 已在 `.gitignore` 里）
 - [ ] 用户可见的变化已经写进 `CHANGELOG.md`

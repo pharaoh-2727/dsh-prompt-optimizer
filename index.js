@@ -99,12 +99,13 @@ function abortedError() {
  * 这些工具、能读写工作区文件的编码代理。提示词里没写清楚「改哪个文件、
  * 怎么验证、什么不能动」，代理就只能猜。所以改写时把 DSH 的约定补进去。
  */
-const DSH_SCENE = [
+const SCENE_TEMPLATE = [
   'DSH 场景约定（这段文字会发给 DeepSeek Harness —— 一个能读写文件、跑命令的编码代理）：',
   '本节是背景说明，帮助你看懂原文里的路径、命令和交付物指什么；',
   '它不授权你新增内容：原文没提到的文件、命令、环境或验收手段，',
   '不要为了套用本节而补写。档位规则里「禁止新增」的条款优先于本节。',
   '1. 工作区与文件引用：DSH 的工作目录就是当前会话的工作区。',
+  '   当前会话的工作区是 {{workspace}}；',
   '   文件用 @ 开头的 token 引用，例如 @src/app.ts；相对路径相对工作区根目录解析；',
   '   路径含空格写成 @"path with space"。原文提到具体文件时，按这个格式把引用写清楚。',
   '2. 动作要可执行：DSH 有 read、write、edit、glob、grep、bash/pwsh、web_search、',
@@ -115,9 +116,64 @@ const DSH_SCENE = [
   '4. 验收口径要可判定：原文含验收信息时，写成可判定的说法',
   '   （例如「node scripts/test.mjs 通过」「只改动 X 模块」），不写「写得专业」这类空话。',
   '5. 环境与边界要交代：原文涉及安装、构建、部署时，写明运行环境与工具链',
-  '   （【环境参数：本机是 Windows，终端是 PowerShell —— 按实际机器修改此行】），',
+  '   （{{environment}}），',
   '   以及原文声明的不能碰的东西。',
 ].join('\n')
+
+/**
+ * 本机环境那一句。**读真实平台**，不写死。
+ *
+ * 早先这里是「【环境参数：本机是 Windows，终端是 PowerShell —— 按实际机器修改此行】」，
+ * 本意是给改提示词的人看的注解，但它会被原样发给模型：换台 Linux 机器，
+ * 插件照样告诉模型「本机是 Windows，终端是 PowerShell」，改写出来的命令全是错的。
+ */
+function describeEnvironment() {
+  if (process.platform === 'win32') return '本机是 Windows，终端是 PowerShell'
+  if (process.platform === 'darwin') return '本机是 macOS，终端是 bash'
+  return '本机是 Linux，终端是 bash'
+}
+
+/**
+ * 把场景约定渲染成要发给模型的那段文字。
+ *
+ * 模板里用 {{name}} 占位，值来自这次调用拿得到的真实上下文：
+ *   workspace   —— 这个会话的工作区绝对路径；拿不到就整行去掉，
+ *                  **不编造、也不留占位符**（宁可不说，也不能说错）。
+ *   environment —— 由 describeEnvironment() 按真实平台生成，永远有值。
+ *
+ * @param {{workspace?: string, environment?: string}} [context]
+ */
+function dshScene(context) {
+  const values = {
+    workspace: typeof context?.workspace === 'string' ? context.workspace.trim() : '',
+    environment: typeof context?.environment === 'string' && context.environment.length > 0
+      ? context.environment
+      : describeEnvironment(),
+  }
+  return SCENE_TEMPLATE
+    .split('\n')
+    // 值拿不到的行整行删掉：留下「当前会话的工作区是 ；」比不写更糟。
+    .filter((line) => {
+      const found = /\{\{(\w+)\}\}/u.exec(line)
+      if (found === null) return true
+      return (values[found[1]] ?? '').length > 0
+    })
+    .map((line) => line.replace(/\{\{(\w+)\}\}/gu, (_all, name) => values[name] ?? ''))
+    .join('\n')
+}
+
+/** 静态渲染用的上下文：设置页要显示「这一档会发出去什么」，那里没有会话可问。 */
+const STATIC_SCENE_CONTEXT = Object.freeze({ workspace: '', environment: '' })
+
+/**
+ * 拼出一档完整的系统提示词：档位规则 + 场景约定 + 公共规则。
+ *
+ * 顺序不能换：公共规则的优先级最高，放最后读；场景约定夹在中间，
+ * 因为它是「解释原文里的路径和命令指什么」，不改变改写的力度。
+ */
+function renderPrompt(item, context) {
+  return [item.tierPrompt, '', dshScene(context ?? STATIC_SCENE_CONTEXT), '', COMMON].join('\n')
+}
 
 /**
  * 三档预设提示词。
@@ -202,7 +258,7 @@ const STYLE_ITEMS = [
     bandBadge: '≤1.15× / +10 字',
     scope: '只改语病、指代和含糊量词，不补任何新信息',
     forbid: '不新增要求、范围、产出、验收标准和背景',
-    prompt: [
+    tierPrompt: [
       '你是一个给 DeepSeek Harness（DSH）写提示词的人。用户会给你一段他们准备发给 DSH 的文字。',
       '你只负责改写这段文字，不负责回答它：输出永远是改写后的提示词，不是答案。',
       '这一档叫「精简」：目标是让原文能被看懂，并且读起来像人话。',
@@ -225,10 +281,6 @@ const STYLE_ITEMS = [
       '长度上限（按字符数计，不含首尾空白）：不超过原文的 1.15 倍；',
       '原文不足 60 字时，改为不超过「原文 + 10 字」（两者取大）。',
       '也就是说：改完比原文更清楚，但看不出是被重写过的。',
-      '',
-      DSH_SCENE,
-      '',
-      COMMON,
     ].join('\n'),
   },
   {
@@ -239,7 +291,7 @@ const STYLE_ITEMS = [
     bandBadge: '≤1.6× / +60 字',
     scope: '补齐含糊处，并写明交付什么、怎样算完成',
     forbid: '不新增原文没有的要求、范围、背景、依赖和数字',
-    prompt: [
+    tierPrompt: [
       '你是一个给 DeepSeek Harness（DSH）写提示词的人。用户会给你一段他们准备发给 DSH 的文字。',
       '你只负责改写这段文字，不负责回答它：输出永远是改写后的提示词，不是答案。',
       '这一档叫「均衡」：目标是让 DSH 一次就能做对 —— 既看得懂原意，也知道要交付什么、怎样算完成。',
@@ -266,10 +318,6 @@ const STYLE_ITEMS = [
       '',
       '长度上限（按字符数计，不含首尾空白）：不超过原文的 1.6 倍；',
       '原文不足 100 字时，改为不超过「原文 + 60 字」（两者取大）。',
-      '',
-      DSH_SCENE,
-      '',
-      COMMON,
     ].join('\n'),
   },
   {
@@ -280,7 +328,7 @@ const STYLE_ITEMS = [
     bandBadge: '≤2.2× / +150 字',
     scope: '补齐目标、输入上下文、步骤、产出格式、验收标准，并去重',
     forbid: '同一件事不写两遍，不补造依赖、数量和背景',
-    prompt: [
+    tierPrompt: [
       '你是一个给 DeepSeek Harness（DSH）写提示词的人。用户会给你一段他们准备发给 DSH 的文字。',
       '你只负责改写这段文字，不负责回答它：输出永远是改写后的提示词，不是答案。',
       '这一档叫「详细」：目标是让一份任务说明完整到 DSH 可以直接执行、可以自检 —— 但每一句都得有用。',
@@ -309,13 +357,28 @@ const STYLE_ITEMS = [
       '长度上限（按字符数计，不含首尾空白）：不超过原文的 2.2 倍；',
       '原文不足 150 字时，改为不超过「原文 + 150 字」（两者取大）。',
       '宁可短而准，不要长而空。',
-      '',
-      DSH_SCENE,
-      '',
-      COMMON,
     ].join('\n'),
   },
 ]
+
+/*
+ * 每一档都要能直接读出「完整会发出去的那份提示词」。
+ *
+ * 以前 prompt 是模块顶层算好的一整段字符串，场景约定被烤死在里面 ——
+ * 于是「工作区是哪个」「本机是什么系统」这两件事只能写死。
+ * 现在 prompt 是**取值器**：设置页读到的是静态渲染（没有会话上下文），
+ * 真正调用模型前用这次会话的上下文再渲染一遍。两者拼装顺序完全一样，
+ * 所以设置页看到的就是会发出去的那份。
+ */
+for (const item of STYLE_ITEMS) {
+  Object.defineProperty(item, 'prompt', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return renderPrompt(item, STATIC_SCENE_CONTEXT)
+    },
+  })
+}
 
 /** 默认设置。auto + balanced 是「不用配置也能用」的组合。 */
 const DEFAULT_SETTINGS = {
@@ -488,15 +551,15 @@ function modelFromPatch() {
 }
 
 /** 按当前设置决定用哪份系统提示词。 */
-function systemPromptFor(current) {
+function systemPromptFor(current, sceneContext) {
   if (current.style === 'custom') {
     const custom = current.customPrompt.trim()
     if (custom.length > 0) return custom
     // 自定义为空时退回均衡档，避免把空字符串当系统提示发出去。
-    return STYLE_ITEMS.find((item) => item.id === 'balanced').prompt
+    return renderPrompt(STYLE_ITEMS.find((item) => item.id === 'balanced'), sceneContext)
   }
   const found = STYLE_ITEMS.find((item) => item.id === current.style)
-  return (found ?? STYLE_ITEMS[1]).prompt
+  return renderPrompt(found ?? STYLE_ITEMS[1], sceneContext)
 }
 
 /**
@@ -604,9 +667,11 @@ function bandViolation(styleId, source, result) {
  * 复用原档位的提示词，再把「上次哪里不对、这次要改成什么样」写清楚，
  * 让模型自己收放，而不是换一档重来 —— 换档会把用户选的那一档换掉。
  */
-function correctionPromptFor(styleId, source, result, violation) {
+function correctionPromptFor(styleId, source, result, violation, sceneContext) {
   const item = STYLE_ITEMS.find((entry) => entry.id === styleId)
-  const base = item === undefined ? systemPromptFor({ style: styleId }) : item.prompt
+  const base = item === undefined
+    ? systemPromptFor({ style: styleId }, sceneContext)
+    : renderPrompt(item, sceneContext)
   const [kind, bound] = violation.split(':')
   const limit = Number(bound)
 
@@ -775,6 +840,31 @@ const SSE_HEADERS = {
 }
 
 /** 推一条 SSE 事件。客户端已经断开时写入会抛错，忽略即可。 */
+/**
+ * 把一次失败翻成「回执里能带出去的错误码」。
+ *
+ * 为什么需要它：早先错误回执里只有一段中文，调用方（客户端、别的插件、
+ * 写测试的人）只能拿字符串去猜发生了什么。文案一改，判断就跟着坏。
+ * 错误码是稳定契约：文案可以换，码不能。
+ *
+ * @param {unknown} error
+ * @returns {string} EMPTY_INPUT / TOO_LONG / EMPTY_OUTPUT / ABORTED / UNKNOWN
+ */
+function errorCodeOf(error) {
+  const code = error === null || error === undefined ? undefined : error.code
+  if (code === 'EMPTY_INPUT' || code === 'TOO_LONG' || code === 'EMPTY_OUTPUT') return code
+  // 取消不是错误，但也要能被认出来：客户端据此静默收场，不弹红框。
+  if (error !== null && error !== undefined && (error.aborted === true || error.name === 'AbortError')) return 'ABORTED'
+  return 'UNKNOWN'
+}
+
+/** 错误码 → HTTP 状态码。输入类错误是用户的问题（400），模型没吐东西是上游的问题（502）。 */
+function httpStatusOf(code) {
+  if (code === 'EMPTY_INPUT' || code === 'TOO_LONG') return 400
+  if (code === 'EMPTY_OUTPUT') return 502
+  if (code === 'ABORTED') return 499
+  return 500
+}
 function writeEvent(res, event, data) {
   try {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -1019,6 +1109,67 @@ export function apply(ctx) {
       }
     }
 
+    /*
+     * 这次改写的场景上下文：会话工作区 + 本机环境。
+     *
+     * 为什么要在每次调用时现算、而不是启动时算一次：
+     *   - 工作区是**会话级**的，用户可以在一个 DSH 里开两个会话指向两个项目；
+     *   - 用户在会话里换过目录（workingDirectory.set）之后，下一个请求就该跟着变。
+     * 拿不到就不给值 —— dshScene() 会把那一行整行删掉，绝不编造路径。
+     */
+    const sceneContext = { workspace: workspaceOf(agent, sessionId), environment: '' }
+
+    /** 取这个会话的工作区绝对路径；拿不到返回空串。 */
+    function workspaceOf(liveAgent, liveSessionId) {
+      const session = sessionOf(liveAgent, liveSessionId)
+
+      // 1. 宿主 workingDirectory 服务：它管着「会话当前目录」，
+      //    用户在会话里换过目录之后以它为准，header 里记的只是原始目录。
+      if (session !== undefined) {
+        try {
+          const dir = ctx.workingDirectory?.get?.(session)
+          if (typeof dir === 'string' && dir.length > 0) return dir
+        } catch {
+          /* 忽略 */
+        }
+      }
+
+      // 2. 会话 header 里记着的原始目录（重启后仍在，最可靠）。
+      try {
+        const header = session?.header ?? session?.meta
+        if (typeof header?.cwd === 'string' && header.cwd.length > 0) return header.cwd
+      } catch {
+        /* 忽略 */
+      }
+
+      // 3. 兜底：部署级默认目录。它代表「这台机器默认在哪儿干活」，
+      //    与会话无关，但比不说强 —— 说错了会让模型去改错目录，
+      //    所以只在上面两条都拿不到时才用。
+      try {
+        const dir = ctx.workingDirectory?.defaultDirectory
+        if (typeof dir === 'string' && dir.length > 0) return dir
+      } catch {
+        /* 忽略 */
+      }
+      return ''
+    }
+
+    /** 拿到会话对象：优先用调用方给的 agent，其次问宿主要这个 sessionId 的绑定。 */
+    function sessionOf(liveAgent, liveSessionId) {
+      try {
+        const fromAgent = liveAgent?.session
+        if (fromAgent !== undefined && fromAgent !== null) return fromAgent
+      } catch {
+        /* 忽略 */
+      }
+      try {
+        const binding = liveSessionId.length > 0 ? ctx.sessions?.binding?.(liveSessionId) : undefined
+        return binding?.session
+      } catch {
+        /* 忽略 */
+      }
+    }
+
     /**
      * 尝试一次改写。
      *
@@ -1100,7 +1251,7 @@ export function apply(ctx) {
       }
     }
 
-    const first = await enhanceOnce(systemPromptFor(current), text, liveHooks)
+    const first = await enhanceOnce(systemPromptFor(current, sceneContext), text, liveHooks)
     let optimized = first.text
     let usedFree = first.usedFree
     if (optimized.length === 0) {
@@ -1119,7 +1270,7 @@ export function apply(ctx) {
         reason: 'recovered',
         text: '生成时把一句话扩成了文档，正在拉回克制写法…',
       })
-      const briefPrompt = STYLE_ITEMS.find((item) => item.id === 'brief').prompt
+      const briefPrompt = renderPrompt(STYLE_ITEMS.find((item) => item.id === 'brief'), sceneContext)
       const retry = await enhanceOnce(briefPrompt, text)
       if (retry.text.length > 0 && retry.text.length < optimized.length) {
         optimized = retry.text
@@ -1144,7 +1295,7 @@ export function apply(ctx) {
           : '这一档要求补出产出与验收，正在补齐…',
       })
       const corrected = await enhanceOnce(
-        correctionPromptFor(activeStyle, text, optimized, violation),
+        correctionPromptFor(activeStyle, text, optimized, violation, sceneContext),
         text,
       )
       if (corrected.text.length > 0) {
@@ -1363,13 +1514,14 @@ export function apply(ctx) {
         const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
         if (text.length === 0) {
           res.writeHead(400, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, error: '输入为空，没有可优化的内容' }))
+          res.end(JSON.stringify({ ok: false, code: 'EMPTY_INPUT', error: '输入为空，没有可优化的内容' }))
           return
         }
         if (text.length > MAX_INPUT_CHARS) {
           res.writeHead(400, JSON_HEADERS)
           res.end(JSON.stringify({
             ok: false,
+            code: 'TOO_LONG',
             error: `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`,
           }))
           return
@@ -1401,16 +1553,17 @@ export function apply(ctx) {
           // 用户点了取消：这不是失败，别弹红色报错。
           if (controller.signal.aborted === true || error?.aborted === true) {
             res.writeHead(499, JSON_HEADERS)
-            res.end(JSON.stringify({ ok: false, aborted: true, error: '已取消' }))
+            res.end(JSON.stringify({ ok: false, aborted: true, code: 'ABORTED', error: '已取消' }))
             return
           }
-          // 输入类错误（空、过长）是用户的问题，用 400 而不是 500。
-          const code = error?.code === 'EMPTY_INPUT' || error?.code === 'TOO_LONG' ? 400
-            : error?.code === 'EMPTY_OUTPUT' ? 502 : 500
-          res.writeHead(code, JSON_HEADERS)
+          // 回执里必须带错误码：只有中文文案的话，调用方一改文案就判断不了了。
+          const errorCode = errorCodeOf(error)
+          const status = httpStatusOf(errorCode)
+          res.writeHead(status, JSON_HEADERS)
           res.end(JSON.stringify({
             ok: false,
-            error: code === 500
+            code: errorCode,
+            error: status === 500
               ? `优化失败：${String(error?.message ?? error)}`
               : String(error?.message ?? error),
           }))
@@ -1422,6 +1575,7 @@ export function apply(ctx) {
         res.writeHead(500, JSON_HEADERS)
         res.end(JSON.stringify({
           ok: false,
+          code: errorCodeOf(error),
           error: `优化失败：${String(error?.message ?? error)}`,
         }))
       }
@@ -1453,13 +1607,14 @@ export function apply(ctx) {
         const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
         if (text.length === 0) {
           res.writeHead(400, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, error: '输入为空，没有可优化的内容' }))
+          res.end(JSON.stringify({ ok: false, code: 'EMPTY_INPUT', error: '输入为空，没有可优化的内容' }))
           return
         }
         if (text.length > MAX_INPUT_CHARS) {
           res.writeHead(400, JSON_HEADERS)
           res.end(JSON.stringify({
             ok: false,
+            code: 'TOO_LONG',
             error: `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`,
           }))
           return
@@ -1469,7 +1624,7 @@ export function apply(ctx) {
         const requestId = typeof parsed.requestId === 'string' ? parsed.requestId : ''
         if (requestId.length > 0 && activeJobs.has(requestId)) {
           res.writeHead(409, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, error: '这个优化请求已经在跑了' }))
+          res.end(JSON.stringify({ ok: false, code: 'IN_FLIGHT', error: '这个优化请求已经在跑了' }))
           return
         }
 
@@ -1508,7 +1663,12 @@ export function apply(ctx) {
           if (controller.signal.aborted === true || error?.aborted === true) {
             writeEvent(res, 'aborted', { error: '已取消' })
           } else {
-            writeEvent(res, 'error', { error: `优化失败：${String(error?.message ?? error)}` })
+            // 错误码同样要带出去：流式入口是客户端的主路径，
+            // 只靠中文文案判断失败原因不可维护。
+            writeEvent(res, 'error', {
+              code: errorCodeOf(error),
+              error: `优化失败：${String(error?.message ?? error)}`,
+            })
           }
           res.end()
         } finally {
@@ -1708,4 +1868,15 @@ export function apply(ctx) {
   }
 }
 
-export { STYLE_ITEMS, DEFAULT_SETTINGS }
+export {
+  STYLE_ITEMS,
+  DEFAULT_SETTINGS,
+  // 提示词工具链要用的：模板（带占位符）、公共规则、渲染器。
+  // dev/dump-prompts.mjs 导出它们，dev/apply-prompts.mjs 写回它们。
+  SCENE_TEMPLATE,
+  COMMON,
+  STATIC_SCENE_CONTEXT,
+  renderPrompt,
+  dshScene,
+  describeEnvironment,
+}

@@ -1037,7 +1037,10 @@ window.__ModuleLoader__.load({
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok || data.ok === false) {
-        throw new Error(data.error || `HTTP ${response.status}`)
+        // 把错误码挂在异常上：上层要按码分支时不必去啃中文文案。
+        const failure = new Error(data.error || `HTTP ${response.status}`)
+        if (typeof data.code === 'string') failure.code = data.code
+        throw failure
       }
       return data
     }
@@ -1186,7 +1189,11 @@ window.__ModuleLoader__.load({
             else if (event.event === 'revise') hooks.onRevise?.(event.data)
             else if (event.event === 'reasoning') hooks.onReasoning(event.data.text)
             else if (event.event === 'done') result = event.data
-            else if (event.event === 'error') result = { ok: false, error: event.data.error }
+            else if (event.event === 'error') {
+              // code 是稳定契约（ABORTED / EMPTY_INPUT / TOO_LONG / EMPTY_OUTPUT / UNKNOWN）；
+              // error 文案随时可能改，判断逻辑不能挂在它上面。
+              result = { ok: false, error: event.data.error, code: event.data.code }
+            }
             else if (event.event === 'aborted') {
               result = { ok: false, aborted: true, error: event.data.error || '已取消' }
             }
@@ -1230,7 +1237,10 @@ window.__ModuleLoader__.load({
       const response = await fetch(`/dsh-prompt-optimizer/settings${query}`)
       const data = await response.json().catch(() => ({}))
       if (!response.ok || data.ok === false) {
-        throw new Error(data.error || `HTTP ${response.status}`)
+        // 把错误码挂在异常上：上层要按码分支时不必去啃中文文案。
+        const failure = new Error(data.error || `HTTP ${response.status}`)
+        if (typeof data.code === 'string') failure.code = data.code
+        throw failure
       }
       return data
     }

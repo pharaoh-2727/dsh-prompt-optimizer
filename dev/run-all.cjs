@@ -28,6 +28,9 @@ const ORDER = [
   'test-preview-flow.cjs',
   'test-multi-entry.cjs',
   'test-stream-parity.cjs',
+  'test-result-stability.cjs',
+  'test-scene-context.cjs',
+  'test-brute-force.cjs',
 ]
 
 function discover() {
