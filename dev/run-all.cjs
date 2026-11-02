@@ -12,7 +12,8 @@
  * 所以「在这台机器上绿、换台机器就红」这种情况不该再出现。
  */
 const { spawnSync } = require('node:child_process')
-const { readdirSync } = require('node:fs')
+const { mkdtempSync, readdirSync } = require('node:fs')
+const os = require('node:os')
 const { join } = require('node:path')
 
 const HERE = __dirname
@@ -43,8 +44,12 @@ function main() {
     process.exit(1)
   }
 
-  // 子进程环境：去掉会让人工配置漏进来的那个变量。
+  // 子进程环境：把机器相关的配置指向一个空目录，让「这台机器上有什么」不影响结果。
+  // 删掉 DSH_HOME 反而更危险 —— 插件会退回真实的 ~/.dsh 去读用户设置。
+  // 每套测试自己会造需要的那一小份（见 stub-model.cjs）。
+  const tmpHome = mkdtempSync(join(os.tmpdir(), 'dsho-runall-'))
   const env = { ...process.env }
+  env.DSH_HOME = tmpHome
   delete env.DSH_PROFILE_DIR
 
   const failures = []

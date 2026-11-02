@@ -6,8 +6,36 @@
  *   4. 读取 settings 路由能返回合理的 JSON
  */
 const { pathToFileURL } = require('node:url')
+const { mkdtempSync, mkdirSync, writeFileSync } = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { stubModel } = require('./stub-model.cjs')
 
-const PLUGIN = process.env.DSHO_PLUGIN || require('node:path').join(__dirname, '..', 'index.js')
+const PLUGIN = process.env.DSHO_PLUGIN || path.join(__dirname, '..', 'index.js')
+
+// 这个用例把 routeBySession 当唯一的路由来源（断言 resolved.source === 'session'）。
+// 别的机器上如果存在 profile 里的默认模型，兜底链会先命中它，断言就会飘，
+// 所以这里把 DSH_HOME / DSH_PROFILE_DIR 都指向空的临时目录 ——
+// 让「这台机器上有什么」完全不影响结果。模型桩在拿到会话路由之前不会被用到。
+const TMP = mkdtempSync(path.join(os.tmpdir(), 'dsho-smoke-'))
+process.env.DSH_HOME = TMP
+stubModel(path.join(TMP, 'profile'))
+
+// 设置也自己写一份：用例里要断言「工具回报的是当前启用的档位」，
+// 读真机设置的话，别人把默认档位改成精简这条就红了。
+mkdirSync(path.join(TMP, 'prompt-optimizer'), { recursive: true })
+writeFileSync(
+  path.join(TMP, 'prompt-optimizer', 'settings.json'),
+  JSON.stringify({
+    modelMode: 'auto',
+    provider: '',
+    model: '',
+    style: 'detailed',
+    customPrompt: '',
+    freeChannelAsked: true,
+  }, null, 2),
+  'utf8',
+)
 
 async function main() {
   const mod = await import(pathToFileURL(PLUGIN).href)
