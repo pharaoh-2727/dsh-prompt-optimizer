@@ -46,8 +46,8 @@ async function main() {
     ['brief', 60, 70],        // max(69, 70) = 70  ← 加字额度开始占优
     ['brief', 200, 230],      // max(230, 210) = 230
     ['brief', 1000, 1150],    // max(1150, 1010) = 1150
-    ['balanced', 20, 80],     // max(32, 80) = 80
-    ['balanced', 100, 160],   // max(160, 160) = 160
+    ['balanced', 20, 100],    // max(32, 100) = 100  ← 加字额度已提到 80
+    ['balanced', 100, 180],   // max(160, 180) = 180  ← 加字额度占优
     ['balanced', 200, 320],   // max(320, 260) = 320
     ['balanced', 1000, 1600],
     ['detailed', 30, 180],    // max(66, 180) = 180
@@ -101,7 +101,8 @@ async function main() {
   const balanced = mod.STYLE_ITEMS.find((s) => s.id === 'balanced').prompt
   const detailed = mod.STYLE_ITEMS.find((s) => s.id === 'detailed').prompt
 
-  if (!brief.includes('不得新增要求')) throw new Error('brief must forbid adding content')
+  // 精简档的核心约束：不许补原文没有的东西。措辞用正向说法，断言跟着改。
+  if (!brief.includes('别处一个字都不动')) throw new Error('brief must forbid adding content')
   if (!balanced.includes('明确验收口径')) throw new Error('balanced must require acceptance criteria')
   if (!detailed.includes('去重与收紧')) throw new Error('detailed must forbid redundancy')
   if (!detailed.includes('步骤不超过 6 条')) throw new Error('detailed must cap section count')

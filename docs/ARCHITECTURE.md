@@ -100,14 +100,18 @@ optimizeText(text)
 // index.js:190
 const STYLE_BANDS = {
   brief:    { ratioMax: 1.15, plusChars: 10,  absMax: 1500 },
-  balanced: { ratioMax: 1.6,  plusChars: 60,  absMax: 2500 },
+  balanced: { ratioMax: 1.6,  plusChars: 80,  absMax: 2500 },
   detailed: { ratioMax: 2.2,  plusChars: 150, absMax: 4000 },
 }
 // 上限 = min(absMax, max(len × ratioMax, len + plusChars))
 ```
 
-这三个常量必须与三处保持一致：各档 `prompt` 里写的「长度上限」、`dev/prompts/tiers.json` 的 `band`、
-以及 `STYLE_ITEMS` 的 `band` 文案。`dev/test-bands.cjs` 会替你检查。
+这三个常量必须与四处保持一致：各档 `prompt` 里写的「长度上限」与封顶字数、`dev/prompts/tiers.json` 的 `band`、
+以及 `STYLE_ITEMS` 的 `band` 文案。`dev/test-bands.cjs` 与 `dev/test-band-ceiling.cjs` 会替你检查。
+
+**封顶必须写进提示词。** 三档的倍数上限在长输入上会超过 `absMax`（例如原文 3960 字，
+详细档 2.2 倍算出 8712 字，实际封顶只有 4000）。提示词若不写封顶，模型会照着倍数写，
+然后被判超长反复重试。
 
 ## HTTP 路由
 
@@ -204,7 +208,7 @@ const STYLE_BANDS = {
 │   ├── run-all.cjs         一键跑全部测试
 │   ├── stub-model.cjs      测试用的默认模型桩
 │   ├── smoke-host.cjs      宿主半区冒烟
-│   ├── test-*.cjs          11 套行为测试
+│   ├── test-*.cjs          12 套行为测试
 │   ├── dump-prompts.mjs    index.js → prompts/*.txt
 │   ├── apply-prompts.mjs   prompts/*.txt → index.js
 │   └── prompts/            三档提示词的可编辑源文件

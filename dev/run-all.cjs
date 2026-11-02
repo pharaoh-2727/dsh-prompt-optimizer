@@ -22,6 +22,7 @@ const HERE = __dirname
 const ORDER = [
   'smoke-host.cjs',
   'test-bands.cjs',
+  'test-band-ceiling.cjs',
   'test-band-correction.cjs',
   'test-free-channel.cjs',
   'test-restore-state.cjs',

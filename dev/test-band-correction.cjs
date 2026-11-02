@@ -229,6 +229,32 @@ async function main() {
     console.log('no retry    : ✓ one-shot result kept as-is')
   }
 
+  // ── 场景 4：补写之后又超长 → 必须拒绝这次重试结果 ────────────────────
+  //
+  // 真实案发现场：13 字的提问「怎么配置 profile？」在均衡档被写成 93 字，
+  // 上限只有 73。第一次判「过短」，重试后变成「过长」，旧逻辑只看长度有没有
+  // 变大就接受了 —— 结果既没守住上限、还标成 expanded 骗过了复核。
+  {
+    const mod = await loadPlugin('balanced')
+    const source = '怎么配置 profile？'
+    const cap = limitFor('balanced', source.length)
+    const overlong = '补'.repeat(cap + 30)          // 重试后又超长
+    const { ctx, handlers } = makeCtx([source, overlong])
+    mod.apply(ctx)
+
+    const r = await runOptimize(handlers, { text: source, sessionId: 's4' })
+    console.log('too-short→too-long: http', r.code, '| adjusted =', r.body.adjusted,
+      '| len =', r.body.text ? r.body.text.length : 0, '| cap =', cap)
+    if (r.code !== 200) throw new Error('case 4 failed: ' + JSON.stringify(r.body))
+    if (r.body.adjusted === 'expanded') {
+      throw new Error('accepted an over-long retry as expanded (len ' + r.body.text.length + ' > cap ' + cap + ')')
+    }
+    if (r.body.text.length > cap) {
+      throw new Error('returned text exceeds the band cap: ' + r.body.text.length + ' > ' + cap)
+    }
+    console.log('over-long retry: ✓ rejected, kept the in-band original')
+  }
+
   rmSync(TMP, { recursive: true, force: true })
   console.log('\nBAND CORRECTION TEST PASSED')
 }
