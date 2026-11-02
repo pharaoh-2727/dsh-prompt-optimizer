@@ -123,7 +123,10 @@ vm.runInContext(source, sandbox, { filename: CLIENT })
 if (!factory) throw new Error('client.js 没有注册 __ModuleLoader__.load')
 
 const registered = {}
+// 插件挂到 context 上的内部状态（previewStore），用来在用例之间复位。
+const provided = {}
 const ctx = {
+  provide: (name, value) => { provided[name] = value },
   effect: () => {},
   slots: {
     inject: (_name, fn) => fn(),
@@ -302,7 +305,12 @@ function render() {
   return current
 }
 
-/** 全新挂载：清空 hook 状态，模拟用户重新打开页面。 */
+/**
+ * 全新挂载：清空 hook 状态，模拟用户重新打开页面。
+ *
+ * 顺带把模块级的「正在生成」复位：上一个用例若是从流中途切走的，
+ * 不清掉的话新挂载的按钮一上来就写着「取消」。
+ */
 function mount(initialDraft) {
   slotStates.clear()
   draft = initialDraft
@@ -370,6 +378,12 @@ let streamMissing = false
 let doneAdjusted = null
 let doneRecovered = false
 let doneSource = 'session'
+// 流里要不要插一帧 revise（服务端说「要整段换稿了」）。
+let streamRevise = ''
+// 帧与帧之间隔多少毫秒：用来观察「换稿中」这种中间态。
+let streamFrameDelay = 0
+// 每帧的延迟也可以单独给：用来让某一类事件停得更久，好观察中间态。
+let streamFrameDelays = null
 
 // ── SSE 响应桩 ──────────────────────────────────────────────────────────
 // 服务端推的是 SSE：一串「event: 名字\ndata: {...}\n\n」的帧。
@@ -380,8 +394,13 @@ function sseFrame(name, payload) {
   return 'event: ' + name + NL + 'data: ' + JSON.stringify(payload) + NL + NL
 }
 
-function sseResponse(frames) {
+function sseResponse(frames, frameDelay, perFrame) {
   let index = 0
+  const waitFor = (i) => {
+    const custom = Array.isArray(perFrame) ? perFrame[i] : undefined
+    const ms = typeof custom === 'number' ? custom : frameDelay
+    return typeof ms === 'number' && ms > 0 ? new Promise((r) => setTimeout(r, ms)) : null
+  }
   return {
     ok: true,
     status: 200,
@@ -393,7 +412,9 @@ function sseResponse(frames) {
           async read() {
             if (index >= frames.length) return { done: true, value: undefined }
             const value = frames[index]
+            const gate = waitFor(index)
             index += 1
+            if (gate !== null) await gate
             return { done: false, value }
           },
         }
@@ -433,6 +454,7 @@ function useDefaultFetch() {
         sseFrame('start', { provider: 'workbuddy', model: 'space-bunny', style: 'balanced', source: 'session' }),
         sseFrame('reasoning', { text: '先确认任务范围' }),
         sseFrame('delta', { text: optimizeText.slice(0, 8) }),
+        ...(streamRevise ? [sseFrame('revise', { reason: 'trimmed', text: streamRevise })] : []),
         sseFrame('delta', { text: optimizeText }),
         sseFrame('done', {
           ok: true,
@@ -448,7 +470,7 @@ function useDefaultFetch() {
           elapsedMs: 1234,
         }),
       ]
-      return sseResponse(frames)
+      return sseResponse(frames, streamFrameDelay, streamFrameDelays)
     }
     if (target.includes('/optimize')) {
       optimizeCalls++
@@ -473,6 +495,12 @@ function cardButton(text) {
 
 function cardText() {
   return textOf(currentCard)
+}
+
+/** 卡片标题行（模型 · 档位 · 状态）的文字：断言状态文案时看它最干净。 */
+function cardMeta() {
+  const node = cardNode('dsho-dock-meta')
+  return node === null ? '' : textOf(node)
 }
 
 function cardVisible() {
@@ -1067,6 +1095,82 @@ async function main() {
   walk(current, (node) => { if (node.props?.className === 'dsho-err') streamErr = textOf(node) })
   check('取消不弹错误提示', streamErr === '', streamErr)
   optimizeAborts = false
+
+  console.log('\n[29b] 服务端说「要换稿」时，卡片上的字换成原因，而不是结果自己变掉')
+  streamRevise = '超出这一档的长度上限，正在重新收敛…'
+  // 帧序：start / reasoning / delta / revise / delta / done —— 让 revise 之后多停一会，
+  // 好在这一刻观察界面（真实环境里重写要跑好几秒）。
+  streamFrameDelays = [0, 0, 0, 0, 300, 0]
+  mount('换稿提示')
+  click()
+  await tick(80)
+  check('换稿说明写在卡上', /正在重新收敛/.test(cardMeta()), cardMeta())
+  await tick(400)
+  check('换稿结束后正文是最终结果', cardText().includes(optimizeText), cardText().slice(0, 120))
+  check('换稿结束后不再显示换稿说明', !/正在重新收敛/.test(cardMeta()), cardMeta())
+  streamFrameDelay = 0
+  streamFrameDelays = null
+  streamRevise = ''
+
+  console.log('\n[29c] 上一批事件迟到时不能覆盖新一次优化的结果')
+  /*
+   * 第一版还在生成时用户点了卡片上的「重新优化」。
+   *
+   * 于是两路流同时在跑：先发的那路可能后结束。若它的尾巴照写不误，
+   * 屏幕上就会出现「新结果闪一下又被上一版顶掉」—— 同样是结果突变。
+   */
+  {
+    let releaseFirst
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve })
+    const slowText = '【旧】这是上一次优化的结果'
+    const fastText = '【新】这是这一次优化的结果'
+    let streamRound = 0
+    fetchImpl = async (url) => {
+      const target = String(url)
+      if (target.includes('/abort')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, aborted: true }) }
+      }
+      if (!target.includes('/stream')) {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      }
+      streamRound += 1
+      const round = streamRound
+      if (round === 1) await firstGate
+      const body = round === 1 ? slowText : fastText
+      return sseResponse([
+        sseFrame('start', { provider: 'workbuddy', model: 'space-bunny', style: 'balanced', source: 'session' }),
+        sseFrame('delta', { text: body }),
+        sseFrame('done', {
+          ok: true,
+          text: body,
+          provider: 'workbuddy',
+          model: 'space-bunny',
+          style: 'balanced',
+          source: 'session',
+          adjusted: null,
+          recovered: false,
+          usage: null,
+          elapsedMs: 10,
+        }),
+      ])
+    }
+
+    mount('迟到事件测试')
+    click()          // 第一次：卡在 firstGate 上
+    await tick(20)
+    optimizeCalls = 0
+    // 第一路还在流里，用卡片上的「重新优化」开第二路。
+    cardButton('重新优化').props.onClick()
+    await tick(120)
+    check('第二次的结果已经显示', cardText().includes(fastText), cardText().slice(0, 120))
+
+    releaseFirst()   // 第一次的尾巴现在才回来
+    await tick(120)
+    check('迟到的旧结果没有覆盖新结果', cardText().includes(fastText) && !cardText().includes(slowText),
+      cardText().slice(0, 160))
+    useDefaultFetch()
+  }
+
   console.log('\n[30] C19 视口约束：窗口变矮时卡片不能顶出屏幕，也不能把子块挤出去')
   // 卡片贴在输入框上方、整条 composer 贴底定位，所以卡片下沿固定：
   // 可用高度 = 下沿到视口顶部的距离 - 余量。这里把下沿摆在 660，视口高 700。

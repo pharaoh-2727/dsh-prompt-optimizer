@@ -1123,6 +1123,7 @@ window.__ModuleLoader__.load({
      * 服务端推的事件：
      *   start → {provider, model, style, source}
      *   delta → {text}   当前累计正文（整段，不是增量）
+     *   revise → {reason, text} 要整段换稿了（收敛 / 补齐 / 拉回）
      *   reasoning → {text} 模型的思考过程
      *   done  → {ok, text, usage, elapsedMs, ...}
      *   error / aborted → {error}
@@ -1182,6 +1183,7 @@ window.__ModuleLoader__.load({
           if (event !== null) {
             if (event.event === 'start') hooks.onStart(event.data)
             else if (event.event === 'delta') hooks.onText(event.data.text)
+            else if (event.event === 'revise') hooks.onRevise?.(event.data)
             else if (event.event === 'reasoning') hooks.onReasoning(event.data.text)
             else if (event.event === 'done') result = event.data
             else if (event.event === 'error') result = { ok: false, error: event.data.error }
@@ -1496,6 +1498,7 @@ window.__ModuleLoader__.load({
         meta: null,         // 模型、档位等回执
         adopted: false,     // 结果是否已被采用
         streaming: false,   // 是否正在流式接收
+        revising: '',       // 换稿提示：非空表示「正在按档位重写」，内容是原因
         reasoning: '',      // 模型的思考过程（模型不给就没有）
         elapsedMs: null,    // 用时（毫秒）
         usage: null,        // token 用量 {inputTokens, outputTokens, ...}
@@ -1517,7 +1520,7 @@ window.__ModuleLoader__.load({
         this.set({
           phase: 'idle', requestId: '', source: '', original: '',
           result: '', conflict: false, meta: null, adopted: false,
-          streaming: false, reasoning: '', elapsedMs: null, usage: null,
+          streaming: false, revising: '', reasoning: '', elapsedMs: null, usage: null,
           viewing: null, compareId: '', comparingOriginal: false,
         })
       },
@@ -1711,13 +1714,24 @@ window.__ModuleLoader__.load({
         meta: null,
         adopted: false,
         streaming: true,
+        revising: '',
         reasoning: '',
         elapsedMs: null,
         usage: null,
       })
 
+      /*
+       * 这批事件只属于本次请求。
+       *
+       * 用户连点两次、或者上一次请求的尾巴迟到时，旧事件若照写不误，
+       * 新一次优化显示到一半就会被上一版的正文顶掉 —— 屏幕上同样是
+       * 「结果突然变成了另一个结果」。requestId 就是这条识别线。
+       */
+      const isCurrent = () => previewStore.state.requestId === requestId
+
       const result = await streamOptimize(source, sessionId, requestId, {
         onStart: (data) => {
+          if (!isCurrent()) return
           // 一开始就知道用哪个模型、哪一档，界面上先显示出来。
           previewStore.set({
             meta: {
@@ -1730,13 +1744,28 @@ window.__ModuleLoader__.load({
           })
         },
         onText: (value) => {
+          if (!isCurrent()) return
           // 流式过程中正文是「到目前为止」的内容，直接替换。
           previewStore.set({ result: typeof value === 'string' ? value : '' })
         },
         onReasoning: (value) => {
+          if (!isCurrent()) return
           previewStore.set({ reasoning: typeof value === 'string' ? value : '' })
         },
+        onRevise: (data) => {
+          if (!isCurrent()) return
+          // 服务端要整段换稿了：把「生成中…」换成具体原因，
+          // 用户看到的是「正在按档位重写」，而不是结果自己变掉了。
+          const reason = typeof data?.text === 'string' && data.text.length > 0
+            ? data.text
+            : '正在重写这一版…'
+          previewStore.set({ revising: reason })
+        },
       })
+
+      // 迟到的这批结果已经不属于当前这次了（用户又点了一次）：
+      // 直接丢弃 —— 不写流水账、不改状态，让新请求自己跑完。
+      if (!isCurrent()) return { ok: false, stale: true }
 
       // 取消不是失败：不弹红色报错，直接回到原状。
       if (result.aborted === true) {
@@ -1772,6 +1801,7 @@ window.__ModuleLoader__.load({
         result: result.text,
         conflict,
         streaming: false,
+        revising: '',
         elapsedMs: typeof result.elapsedMs === 'number' ? result.elapsedMs : null,
         usage: result.usage ?? null,
         reasoning: typeof result.reasoning === 'string' ? result.reasoning : '',
@@ -2191,23 +2221,34 @@ window.__ModuleLoader__.load({
         timerRef.current = setTimeout(() => setError(null), 5000)
       }, [])
 
+      /*
+       * 发起一次优化。
+       *
+       * 不做「忙着就 return」：那会让第二次点击看起来毫无反应 —— 屏幕上还在
+       * 长的是第一次的字，用户以为卡住了。允许再开一次更符合直觉；两次结果
+       * 不会互相顶，因为 runOptimize 里每批事件都按 requestId 认领。
+       */
       const run = useCallback(async () => {
-        if (busyRef.current) return
         const raw = typeof draft === 'string' ? draft : ''
         if (raw.trim().length === 0) return
 
         busyRef.current = true
+        previewStore.set({ phase: 'running' })
         setBusy(true)
         setError(null)
         try {
           const outcome = await runOptimize(raw, sessionId)
+          if (outcome.stale === true) return
           if (outcome.aborted === true) return
           if (outcome.ok !== true) showError(outcome.error)
         } catch (err) {
           showError(err && err.message ? err.message : err)
         } finally {
-          busyRef.current = false
-          setBusy(false)
+          // 只有自己还是当前这一次时才松手：更晚发起的那次可能还在跑。
+          if (previewStore.state.phase !== 'running') {
+            busyRef.current = false
+            setBusy(false)
+          }
         }
       }, [draft, sessionId, showError])
 
@@ -2230,10 +2271,17 @@ window.__ModuleLoader__.load({
         }
       }, [props.inputActions])
 
+      /*
+       * 「忙」以共享状态为准，而不是本地 busy。
+       *
+       * 会话头按钮、Alt+O 也会发起优化，它们改的是 previewStore。只看本地
+       * busy 的话，从别的入口开跑时这颗按钮还写着「优化」，点下去会再开一次。
+       */
+      const running = preview.phase === 'running' || busy
       const isRestore = preview.adopted === true
-      const mode = busy ? 'cancel' : isRestore ? 'restore' : 'optimize'
-      const label = busy ? '取消' : isRestore ? '退回' : '优化'
-      const title = busy
+      const mode = running ? 'cancel' : isRestore ? 'restore' : 'optimize'
+      const label = running ? '取消' : isRestore ? '退回' : '优化'
+      const title = running
         ? '中止这次优化'
         : isRestore
           ? '撤销这次优化，恢复成优化前的内容'
@@ -2247,22 +2295,22 @@ window.__ModuleLoader__.load({
         h('button', {
           type: 'button',
           className: 'dsho-btn',
-          'data-busy': busy ? 'true' : 'false',
+          'data-busy': running ? 'true' : 'false',
           'data-mode': mode,
-          disabled: busy ? false : (!isRestore && empty),
+          disabled: running ? false : (!isRestore && empty),
           onClick: () => {
-            if (busyRef.current) { void cancel(); return }
+            if (running) { void cancel(); return }
             if (isRestore) { restore(); return }
             void run()
           },
-          'aria-label': busy
+          'aria-label': running
             ? '取消优化'
             : isRestore ? '退回优化，恢复原文' : '优化提示词',
           title,
         },
           mode === 'cancel'
             ? h(StopIcon, null)
-            : mode === 'restore' ? h(UndoIcon, null) : h(SparkIcon, { spin: busy }),
+            : mode === 'restore' ? h(UndoIcon, null) : h(SparkIcon, { spin: running }),
           h('span', null, label)
         )
       )
@@ -3066,7 +3114,8 @@ window.__ModuleLoader__.load({
       if (meta.adjusted === 'trimmed') metaParts.push('已按档位上限收敛')
       else if (meta.adjusted === 'expanded') metaParts.push('已补齐到档位下限')
       if (meta.recovered) metaParts.push('从过度扩写中拉回')
-      if (state.streaming === true) metaParts.push('生成中…')
+      // 换稿期间说清楚在干什么：这是「结果突然变了」不再显得莫名其妙的关键。
+      if (state.streaming === true) metaParts.push(state.revising || '生成中…')
 
       /*
        * 用量与用时：模型/档位之外，再告诉用户「花了多少」。

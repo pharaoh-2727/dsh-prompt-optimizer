@@ -945,9 +945,11 @@ export function apply(ctx) {
    * 这些逻辑只留这一份，改一处六处都生效。
    *
    * @param {{text: string, sessionId?: string, agent?: object, signal?: AbortSignal,
-   *          hooks?: {onText?: Function, onReasoning?: Function}}} options
-   *   hooks 只作用于**第一次尝试**的流：兜底与档位重试是第二轮补救，
-   *   用户看到的仍是「优化中」，不需要再推一遍全文。
+   *          hooks?: {onStart?: Function, onText?: Function, onReasoning?: Function,
+   *                   onRevise?: Function}}} options
+   *   hooks 只给**第一次尝试**做逐字推送；后面两次补救（过度扩写拉回、
+   *   档位收敛/补齐）是整段换稿，所以先推一条 onRevise 说明原因，
+   *   收尾再补推一帧最终正文 —— 界面上的最后一帧永远等于返回的正文。
    * @returns {Promise<object>} 与 /optimize 路由返回体同构的结果
    */
   async function optimizeText(options) {
@@ -969,6 +971,37 @@ export function apply(ctx) {
     const current = settings
     // 没有外部 signal 时给一个永不中止的：调用方不必自己造一个。
     const abort = options?.signal ?? new AbortController().signal
+
+    /*
+     * 界面看到的字，和最终返回的字，必须是同一份。
+     *
+     * 只有第一次尝试是「边写边推」的；后面两次补救（过度扩写拉回、档位
+     * 收敛/补齐）是静默整段换稿。于是用户会看到：字长到一半停住，等几秒，
+     * 然后整段变成另一份完全不同的正文 —— 看起来就是「优化结果自己变成了
+     * 另一个优化结果」，而且没有任何解释。
+     *
+     * 这里把两者钉死，做两件事：
+     *   1. 每次补救开始前推一条 onRevise，说明「为什么要重写」；
+     *   2. 收尾时若最终正文还没被推过，补推一帧 —— 客户端收到的最后一帧
+     *      永远等于返回的正文，不会出现「done 里凭空空降一份新结果」。
+     */
+    /** 界面最后看到的那一帧正文；收尾时拿它和最终正文比对。 */
+    let lastStreamed = null
+    /** 真正产出最终正文的那一轮（重试换了路由时，回执要跟它走）。 */
+    let finalRoute = null
+    // 包一层 hooks：既转发给调用方，也把「最后推出去的那帧」记下来。
+    const rawHooks = options?.hooks
+    const liveHooks = rawHooks === undefined || rawHooks === null
+      ? undefined
+      : {
+        onStart: (info) => rawHooks.onStart?.(info),
+        onText: (value) => {
+          lastStreamed = typeof value === 'string' ? value : ''
+          rawHooks.onText?.(value)
+        },
+        onReasoning: (value) => rawHooks.onReasoning?.(value),
+        onRevise: (info) => rawHooks.onRevise?.(info),
+      }
 
     let agent = options?.agent
     if (agent === undefined && sessionId.length > 0) {
@@ -1067,7 +1100,7 @@ export function apply(ctx) {
       }
     }
 
-    const first = await enhanceOnce(systemPromptFor(current), text, options?.hooks)
+    const first = await enhanceOnce(systemPromptFor(current), text, liveHooks)
     let optimized = first.text
     let usedFree = first.usedFree
     if (optimized.length === 0) {
@@ -1081,12 +1114,18 @@ export function apply(ctx) {
     // 此时改用最克制的「精简」档重试一次；取更短的结果，避免把噪声交给用户。
     let recovered = false
     if (looksOverExpanded(text, optimized)) {
+      // 先说清楚要重写，界面才不会「字停住了、然后整段变掉」。
+      liveHooks?.onRevise?.({
+        reason: 'recovered',
+        text: '生成时把一句话扩成了文档，正在拉回克制写法…',
+      })
       const briefPrompt = STYLE_ITEMS.find((item) => item.id === 'brief').prompt
       const retry = await enhanceOnce(briefPrompt, text)
       if (retry.text.length > 0 && retry.text.length < optimized.length) {
         optimized = retry.text
         recovered = true
         usedFree = retry.usedFree
+        finalRoute = retry
       }
     }
 
@@ -1098,6 +1137,12 @@ export function apply(ctx) {
     const activeStyle = current.style
     const violation = bandViolation(activeStyle, text, optimized)
     if (violation !== null && activeStyle !== 'custom') {
+      liveHooks?.onRevise?.({
+        reason: violation.startsWith('too-long') ? 'trimmed' : 'expanded',
+        text: violation.startsWith('too-long')
+          ? '超出这一档的长度上限，正在重新收敛…'
+          : '这一档要求补出产出与验收，正在补齐…',
+      })
       const corrected = await enhanceOnce(
         correctionPromptFor(activeStyle, text, optimized, violation),
         text,
@@ -1113,14 +1158,27 @@ export function apply(ctx) {
         if (better) {
           optimized = corrected.text
           usedFree = corrected.usedFree
+          finalRoute = corrected
           adjusted = violation.startsWith('too-long') ? 'trimmed' : 'expanded'
         }
       }
     }
 
-    const provider = usedFree ? 'free-channel' : (first.route?.provider ?? 'unknown')
-    const model = usedFree ? FREE_CHANNEL.model : (first.route?.model ?? 'unknown')
-    const source = usedFree ? 'free' : (first.route?.source ?? 'session')
+    /*
+     * 收尾补推一帧：补救换过稿时，最后一帧 delta 还停在旧稿上。
+     * 补推之后，界面按顺序收到「旧稿 → revise → 新稿」，最后一帧就是最终稿。
+     */
+    if (liveHooks !== undefined && liveHooks !== null && optimized !== lastStreamed) {
+      liveHooks.onText(optimized)
+      lastStreamed = optimized
+    }
+
+    // 回执里的 provider/model 必须来自**真正产出这份正文**的那一轮：
+    // 补救可能换了路由或走了免费通道，仍报第一次的就会误导读设置页的人。
+    const finalRouteInfo = finalRoute ?? first
+    const provider = usedFree ? 'free-channel' : (finalRouteInfo.route?.provider ?? 'unknown')
+    const model = usedFree ? FREE_CHANNEL.model : (finalRouteInfo.route?.model ?? 'unknown')
+    const source = usedFree ? 'free' : (finalRouteInfo.route?.source ?? 'session')
 
     // 记录本次真实使用的路由，供设置页核实。
     lastUsed = {
@@ -1376,6 +1434,7 @@ export function apply(ctx) {
   //   event: start    —— 拿到路由信息（provider/model/档位）
   //   event: delta    —— 累积到的正文（客户端整段替换，不用自己拼）
   //   event: reasoning—— 模型的思考过程（模型不给就没有这一条）
+  //   event: revise   —— 要整段换稿了，附带原因（收敛 / 补齐 / 拉回）
   //   event: done     —— 最终结果 + 用量 + 用时
   //   event: error    —— 出错了
   // 这样用户点下按钮就能看见字在长，而不是对着一个空转的按钮等。
@@ -1438,6 +1497,9 @@ export function apply(ctx) {
               onStart: (info) => writeEvent(res, 'start', info),
               onText: (value) => writeEvent(res, 'delta', { text: value }),
               onReasoning: (value) => writeEvent(res, 'reasoning', { text: value }),
+              // 换稿前先报一声：客户端据此把「生成中…」换成具体原因，
+              // 用户就不会觉得结果是自己变掉的。
+              onRevise: (info) => writeEvent(res, 'revise', info),
             },
           })
           writeEvent(res, 'done', result)

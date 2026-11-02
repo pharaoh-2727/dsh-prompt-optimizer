@@ -98,8 +98,18 @@ const STYLE_BANDS = {
 
 - 推的正文是**当前累计文本**（不是增量），客户端整段替换即可
 - 模型一秒能吐几十块 token，全推会给界面疯狂重绘，所以攒 40ms 再推一次，最后一定补推一次完整的
-- 事件：`start` / `reasoning` / `delta` / `done`（带 `usage`、`elapsedMs`、`reasoning`）/ `error` / `aborted`
+- 事件：`start` / `reasoning` / `delta` / `revise` / `done`（带 `usage`、`elapsedMs`、`reasoning`）/ `error` / `aborted`
 - 中途取消收到 `aborted` 而非 `error`，客户端据此静默收场
+
+**只有第一次尝试是逐字流的。** 后面两次补救 —— 过度扩写拉回、档位收敛/补齐 ——
+是整段换稿，所以它们开工前先推一条 `revise`（`{reason, text}`），说明"为什么要重写"；
+`optimizeText` 收尾时再补推一帧最终正文。两条合起来保证一件事：
+
+> 界面收到的**最后一帧 `delta` 永远等于 `done.text`**，客户端不会在 `done` 里凭空空降一份新结果。
+
+`revise` 的 `reason` 取值 `trimmed` / `expanded` / `recovered`，`text` 是一句给人看的话
+（例："超出这一档的长度上限，正在重新收敛…"）。客户端把它显示在预览卡的标题行上，
+替代原来的"生成中…"，于是"结果换掉了"这件事有了交代。
 
 ### 取消怎么做的
 
@@ -153,15 +163,15 @@ const STYLE_BANDS = {
 
 ```
 .
-├── index.js            宿主半区（~1650 行）
-├── client.js           客户端半区（~3600 行）
+├── index.js            宿主半区（~1700 行）
+├── client.js           客户端半区（~3700 行）
 ├── cordis.patch.yml    bundle patch：声明插件的 id 与包名
 ├── package.json        版本、exports、dsh 元数据
 ├── dev/
 │   ├── run-all.cjs         一键跑全部测试
 │   ├── stub-model.cjs      测试用的默认模型桩
 │   ├── smoke-host.cjs      宿主半区冒烟
-│   ├── test-*.cjs          8 套行为测试
+│   ├── test-*.cjs          9 套行为测试
 │   ├── dump-prompts.mjs    index.js → prompts/*.txt
 │   ├── apply-prompts.mjs   prompts/*.txt → index.js
 │   └── prompts/            三档提示词的可编辑源文件
