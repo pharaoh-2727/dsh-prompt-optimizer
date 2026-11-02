@@ -110,11 +110,18 @@ npm run prompts:apply    # dev/prompts/*.txt → index.js
 
 ```bash
 npm run check && npm test
-# 改 package.json 的 version、更新 CHANGELOG.md
+# 1. 改 package.json 的 version
+# 2. CHANGELOG.md：[未发布] 收成 [X.Y.Z]，补上日期
+# 3. 写 docs/releases/vX.Y.Z.md（就是 GitHub Release 的正文）
 git add -A && git commit -m "chore: release vX.Y.Z"
 git tag vX.Y.Z && git push origin master --tags
-gh release create vX.Y.Z --generate-notes
+gh release create vX.Y.Z --title "vX.Y.Z —— 一句话说清这版是什么" --notes-file docs/releases/vX.Y.Z.md
 ```
+
+发布说明**写在仓库里**（`docs/releases/vX.Y.Z.md`），不用 `--generate-notes` 自动生成。
+理由：自动生成的只有提交标题，读者看不到「症状是什么、为什么这么修、怎么判断修好了」——
+而这三样恰好是这个插件每次发版最该说清的。文件与 Release 正文是同一份，改哪边都不算数，
+以仓库里的那份为准。
 
 版本号走 [语义化](https://semver.org/lang/zh-CN/)：`0.x` 阶段允许不兼容改动，但要在 CHANGELOG 里写清。
 
