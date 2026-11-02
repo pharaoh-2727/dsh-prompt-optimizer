@@ -1,6 +1,6 @@
 # 架构
 
-两个文件，一分为二：**宿主半区**（Node，\`index.js\`）与**客户端半区**（浏览器，\`client.js\`）。
+两个文件，一分为二：**宿主半区**（Node，`index.js`）与**客户端半区**（浏览器，`client.js`）。
 它们通过五条 HTTP 路由通信，没有别的耦合。
 
 ```
@@ -33,13 +33,13 @@ async function optimizeText({ text, sessionId, agent, signal, hooks })
 
 | 入口 | 注册位置 | 与引擎的关系 |
 |---|---|---|
-| 输入框按钮 / 标题按钮 / Alt+O | \`client.js\` → HTTP | 打 \`/stream\` |
-| \`/optimize <文字>\` | \`index.js:1526\` \`ctx.inject(['commands'])\` | 直接调 \`optimizeText()\` |
-| \`optimize_prompt\` 工具 | \`index.js:1568\` \`ctx.inject(['tools'])\` | 直接调 \`optimizeText()\` |
-| \`promptOptimizer\` 服务 | \`index.js:1625\` \`ctx.provide()\` | 直接调 \`optimizeText()\` |
+| 输入框按钮 / 标题按钮 / Alt+O | `client.js` → HTTP | 打 `/stream` |
+| `/optimize <文字>` | `index.js:1526` `ctx.inject(['commands'])` | 直接调 `optimizeText()` |
+| `optimize_prompt` 工具 | `index.js:1568` `ctx.inject(['tools'])` | 直接调 `optimizeText()` |
+| `promptOptimizer` 服务 | `index.js:1625` `ctx.provide()` | 直接调 `optimizeText()` |
 
-为什么必须收敛：\`/stream\` 曾经自己拼了一遍 \`ctx.llm.stream\`，绕过了档位复核和免费通道回退，
-于是「客户端路径」和「命令路径」对同一输入给出不同结果。\`dev/test-stream-parity.cjs\` 专门钉住这一点。
+为什么必须收敛：`/stream` 曾经自己拼了一遍 `ctx.llm.stream`，绕过了档位复核和免费通道回退，
+于是「客户端路径」和「命令路径」对同一输入给出不同结果。`dev/test-stream-parity.cjs` 专门钉住这一点。
 
 ## 改写引擎内部
 
@@ -73,81 +73,81 @@ const STYLE_BANDS = {
 // 上限 = min(absMax, max(len × ratioMax, len + plusChars))
 ```
 
-这三个常量必须与三处保持一致：各档 \`prompt\` 里写的「长度上限」、\`dev/prompts/tiers.json\` 的 \`band\`、
-以及 \`STYLE_ITEMS\` 的 \`band\` 文案。\`dev/test-bands.cjs\` 会替你检查。
+这三个常量必须与三处保持一致：各档 `prompt` 里写的「长度上限」、`dev/prompts/tiers.json` 的 `band`、
+以及 `STYLE_ITEMS` 的 `band` 文案。`dev/test-bands.cjs` 会替你检查。
 
 ## HTTP 路由
 
-五条路由全部经 \`ctx.effect(() => registerRoute(ctx, route))\` 注册 —— fiber 停止时撤销函数自动执行，
-路由从宿主表里摘掉。不这么做的话，热替换时新实例会撞上 \`webserver: duplicate exact route\`，
+五条路由全部经 `ctx.effect(() => registerRoute(ctx, route))` 注册 —— fiber 停止时撤销函数自动执行，
+路由从宿主表里摘掉。不这么做的话，热替换时新实例会撞上 `webserver: duplicate exact route`，
 插件被标成 stopped，表现为「代码改了但怎么刷新都不生效」。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | \`/dsh-prompt-optimizer/settings\` | 设置、力度预设、可用模型列表、当前解析路由、上次实际调用 |
-| POST / PUT | \`/dsh-prompt-optimizer/settings\` | 保存设置 |
-| GET | \`/dsh-prompt-optimizer/free-channel/test\` | 免费通道探测；\`?force=1\` 跳过缓存 |
-| POST | \`/dsh-prompt-optimizer/stream\` | 流式改写（SSE） |
-| POST | \`/dsh-prompt-optimizer/optimize\` | 一次性改写（流式不可用时的退路） |
-| POST | \`/dsh-prompt-optimizer/abort\` | 取消，body \`{ requestId }\` |
+| GET | `/dsh-prompt-optimizer/settings` | 设置、力度预设、可用模型列表、当前解析路由、上次实际调用 |
+| POST / PUT | `/dsh-prompt-optimizer/settings` | 保存设置 |
+| GET | `/dsh-prompt-optimizer/free-channel/test` | 免费通道探测；`?force=1` 跳过缓存 |
+| POST | `/dsh-prompt-optimizer/stream` | 流式改写（SSE） |
+| POST | `/dsh-prompt-optimizer/optimize` | 一次性改写（流式不可用时的退路） |
+| POST | `/dsh-prompt-optimizer/abort` | 取消，body `{ requestId }` |
 
 ### 流式怎么做的
 
-\`/stream\` 用 \`text/event-stream\` 响应。宿主的 webServer 把 node 的 \`req\`/\`res\` 直接交给插件 handler，
-而且对 \`text/event-stream\` **不做 gzip 压缩**，所以长连接不会被缓冲住。
+`/stream` 用 `text/event-stream` 响应。宿主的 webServer 把 node 的 `req`/`res` 直接交给插件 handler，
+而且对 `text/event-stream` **不做 gzip 压缩**，所以长连接不会被缓冲住。
 
 - 推的正文是**当前累计文本**（不是增量），客户端整段替换即可
 - 模型一秒能吐几十块 token，全推会给界面疯狂重绘，所以攒 40ms 再推一次，最后一定补推一次完整的
-- 事件：\`start\` / \`reasoning\` / \`delta\` / \`done\`（带 \`usage\`、\`elapsedMs\`、\`reasoning\`）/ \`error\` / \`aborted\`
-- 中途取消收到 \`aborted\` 而非 \`error\`，客户端据此静默收场
+- 事件：`start` / `reasoning` / `delta` / `done`（带 `usage`、`elapsedMs`、`reasoning`）/ `error` / `aborted`
+- 中途取消收到 `aborted` 而非 `error`，客户端据此静默收场
 
 ### 取消怎么做的
 
-每次改写分配一个 \`requestId\`，对应的 \`AbortController\` 放进 \`activeJobs\` 表。
+每次改写分配一个 `requestId`，对应的 `AbortController` 放进 `activeJobs` 表。
 
-- \`ctx.llm.stream({ ..., signal })\` 收到这个 signal —— DSH 的 llm 服务会把 signal 一路传到适配器，
-  中断时返回 \`reason.kind === 'aborted'\` 的结束块，**底层网络请求是真断开的**
-- 免费通道走 \`fetch\`，\`callFreeChannel\` 额外挂了 abort 监听，把取消同步转给内部超时控制器
-- \`/abort\` 按 \`requestId\` 找 controller 并 \`abort()\`；同一个 \`requestId\` 重复提交时返回 409
+- `ctx.llm.stream({ ..., signal })` 收到这个 signal —— DSH 的 llm 服务会把 signal 一路传到适配器，
+  中断时返回 `reason.kind === 'aborted'` 的结束块，**底层网络请求是真断开的**
+- 免费通道走 `fetch`，`callFreeChannel` 额外挂了 abort 监听，把取消同步转给内部超时控制器
+- `/abort` 按 `requestId` 找 controller 并 `abort()`；同一个 `requestId` 重复提交时返回 409
 
 ## 客户端半区
 
-\`client.js\` 是一个 \`window.__ModuleLoader__.load({ id, factory(require) { ... } })\` 模块，
+`client.js` 是一个 `window.__ModuleLoader__.load({ id, factory(require) { ... } })` 模块，
 在浏览器里注册这些贡献点：
 
 | 槽位 / 能力 | 注册位置 | 内容 |
 |---|---|---|
-| \`conversation.input.right\` | \`client.js:3567\` | 输入框右侧的 ✨ 按钮 |
-| \`conversation.input.dock\` | \`client.js:3575\` | 预览卡槽位 |
-| \`conversation.session.header.actions\` | \`client.js:3583\` | 会话标题旁的 ✨（order 5） |
-| \`settings.section\` | \`client.js:3596\` | 设置页「优化」一节 |
-| \`shell.overlay\` | \`client.js:3603\` | 全局浮层 |
-| \`document\` keydown | \`client.js:3591\` \`ctx.effect(() => installShortcut(ctx))\` | Alt+O |
-| \`ctx.commandUi.decorate\` | \`client.js:2041\` | 裸 \`/optimize\` 跑在草稿上 |
+| `conversation.input.right` | `client.js:3567` | 输入框右侧的 ✨ 按钮 |
+| `conversation.input.dock` | `client.js:3575` | 预览卡槽位 |
+| `conversation.session.header.actions` | `client.js:3583` | 会话标题旁的 ✨（order 5） |
+| `settings.section` | `client.js:3596` | 设置页「优化」一节 |
+| `shell.overlay` | `client.js:3603` | 全局浮层 |
+| `document` keydown | `client.js:3591` `ctx.effect(() => installShortcut(ctx))` | Alt+O |
+| `ctx.commandUi.decorate` | `client.js:2041` | 裸 `/optimize` 跑在草稿上 |
 
 ### 为什么 Alt+O 自己挂 document
 
-宿主有 \`ctx.shortcuts.register()\`，但 Web 端的 \`isWebBindingAllowed\` 只放行「三个以上修饰键」
-或 \`primary+alt/shift\` 这类组合 —— 纯 Alt+O 会被判成 unsupported 直接抛错。
-所以自己挂 \`document\` 的 keydown，用 \`ctx.effect\` 管生命周期（插件停止时自动摘掉）。
+宿主有 `ctx.shortcuts.register()`，但 Web 端的 `isWebBindingAllowed` 只放行「三个以上修饰键」
+或 `primary+alt/shift` 这类组合 —— 纯 Alt+O 会被判成 unsupported 直接抛错。
+所以自己挂 `document` 的 keydown，用 `ctx.effect` 管生命周期（插件停止时自动摘掉）。
 
 ### 为什么浏览器端命令要「宿主 + 装饰」
 
-\`ctx.commands.register()\` 注册的是**宿主命令**；客户端同名 \`register\` 会抛
-\`ui-commands: contribution /x collides with a host command\`。
-唯一合法的组合是：宿主注册命令（让 \`/optimize 文字\` 能跑），客户端用 \`commandUi.decorate\`
+`ctx.commands.register()` 注册的是**宿主命令**；客户端同名 `register` 会抛
+`ui-commands: contribution /x collides with a host command`。
+唯一合法的组合是：宿主注册命令（让 `/optimize 文字` 能跑），客户端用 `commandUi.decorate`
 接管**裸调用**（让它能读输入框草稿，这是命令 handler 拿不到的）。
 
 ## 状态放在哪
 
 | 状态 | 位置 | 说明 |
 |---|---|---|
-| 设置（档位、模型、自定义提示词） | \`~/.dsh/prompt-optimizer/settings.json\` | 宿主读写，跨会话有效 |
-| 会话实际路由 | 内存 \`routeBySession\` Map | 由 \`agent/request\` 事件填充，\`agent/disposed\` 时清理 |
-| 进行中的请求 | 内存 \`activeJobs\` Map | \`requestId → AbortController\` |
-| 预览卡尺寸 | localStorage \`dsho.preview.body-height\` / \`body-width\` | 只在本浏览器有效 |
-| 历史版本 | localStorage \`dsho.preview.history\` | 最多 20 条，写不进去时自动砍半 |
-| 免费通道失败缓存 | 内存 | \`auth\` 判定为死之后不再反复请求 |
+| 设置（档位、模型、自定义提示词） | `~/.dsh/prompt-optimizer/settings.json` | 宿主读写，跨会话有效 |
+| 会话实际路由 | 内存 `routeBySession` Map | 由 `agent/request` 事件填充，`agent/disposed` 时清理 |
+| 进行中的请求 | 内存 `activeJobs` Map | `requestId → AbortController` |
+| 预览卡尺寸 | localStorage `dsho.preview.body-height` / `body-width` | 只在本浏览器有效 |
+| 历史版本 | localStorage `dsho.preview.history` | 最多 20 条，写不进去时自动砍半 |
+| 免费通道失败缓存 | 内存 | `auth` 判定为死之后不再反复请求 |
 
 ## 目录
 
