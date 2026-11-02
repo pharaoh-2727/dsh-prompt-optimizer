@@ -1,0 +1,58 @@
+{
+  "name": "dsh-prompt-optimizer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DSH 专用提示词优化：一键把输入改写成 DeepSeek Harness 能直接照做的提示词，六个入口共用同一份改写引擎。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "prompt",
+    "prompt-optimizer",
+    "prompt-engineering"
+  ],
+  "homepage": "https://github.com/pharaoh-2727/dsh-prompt-optimizer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pharaoh-2727/dsh-prompt-optimizer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pharaoh-2727/dsh-prompt-optimizer/issues"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node dev/run-all.cjs",
+    "check": "node --check index.js && node --check client.js",
+    "prompts:dump": "node dev/dump-prompts.mjs",
+    "prompts:apply": "node dev/apply-prompts.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.0-rc.1"
+  },
+  "license": "MIT",
+  "author": "zhd"
+}

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "brief",
+    "label": "精简",
+    "summary": "只把话说通：不加任何原文没有的内容，长度贴着原文",
+    "band": "≤ max(1.15 × 原文长度, 原文长度 + 10 字)",
+    "bandBadge": "≤1.15× / +10 字",
+    "scope": "只改语病、指代和含糊量词，不补任何新信息",
+    "forbid": "不新增要求、范围、产出、验收标准和背景",
+    "tierFile": "brief.txt",
+    "effectiveFile": "effective-brief.txt"
+  },
+  {
+    "id": "balanced",
+    "label": "均衡",
+    "summary": "把话说透到能一次做对：写出产出与验收口径",
+    "band": "≤ max(1.6 × 原文长度, 原文长度 + 60 字)",
+    "bandBadge": "≤1.6× / +60 字",
+    "scope": "补齐含糊处，并写明交付什么、怎样算完成",
+    "forbid": "不新增原文没有的要求、范围、背景、依赖和数字",
+    "tierFile": "balanced.txt",
+    "effectiveFile": "effective-balanced.txt"
+  },
+  {
+    "id": "detailed",
+    "label": "详细",
+    "summary": "把任务要素补全并去重：目标/输入/步骤/产出/验收",
+    "band": "≤ max(2.2 × 原文长度, 原文长度 + 150 字)",
+    "bandBadge": "≤2.2× / +150 字",
+    "scope": "补齐目标、输入上下文、步骤、产出格式、验收标准，并去重",
+    "forbid": "同一件事不写两遍，不补造依赖、数量和背景",
+    "tierFile": "detailed.txt",
+    "effectiveFile": "effective-detailed.txt"
+  }
+]

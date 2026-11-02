@@ -1,0 +1,20 @@
+# 依赖与构建产物（本项目其实没有，留着防手滑）
+node_modules/
+dist/
+build/
+
+# 密钥与本机配置 —— 绝不能进仓库
+.env
+.env.*
+*.env
+settings.json
+
+# DSH 环境检查写下的探针文件
+.dsh-write-probe
+
+# 日志与编辑器杂项
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

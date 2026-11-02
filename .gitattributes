@@ -1,0 +1,7 @@
+# 仓库里统一用 LF —— 插件源码会被 DSH 在 Windows 与 Linux 上直接读取，
+# 换行符不一致会让 diff 全是噪声。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
