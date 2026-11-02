@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-optimizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "DSH 专用提示词优化：一键把输入改写成 DeepSeek Harness 能直接照做的提示词，六个入口共用同一份改写引擎。",
   "keywords": [

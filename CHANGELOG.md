@@ -3,9 +3,10 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.1.1] - 2026-11-02
 
-发版前把这一节并进版本号小节；版本号只在真正发布时改。
+修掉 0.1.0 里两件会让人困惑的事：优化结果会在流式输出中途无声换成另一版；
+文档里的测试套数与代码行数停在改动之前。
 
 ### 修复
 
@@ -16,7 +17,19 @@
 - 上一批事件迟到时不再覆盖新一次优化（事件按 `requestId` 认领）
 - 正在生成时点「优化」会真的再开一次，而不是被静默忽略
 - 回执里的 provider/model 取自**真正产出这份正文**的那一轮（补救可能换过路由）
-- 文档里的测试套数与行数跟上实际（9 套 / ~1700 / ~3700）
+
+### 测试
+
+- 新增 `dev/test-result-stability.cjs`，钉住两条不变量：最后一帧 `delta` 等于 `done.text`；
+  正文与流下来的那版不同时，流里必先有 `revise` 且带原因
+- `dev/test-preview-flow.cjs` 补三条断言：换稿说明显示在卡上并在结束后消失、上一批迟到事件不覆盖新结果
+
+### 文档
+
+- 测试套数 8 → 9：`README.md`、`CONTRIBUTING.md`、`docs/DEVELOPMENT.md`、`docs/ARCHITECTURE.md`
+- 代码规模改成实测值：`index.js` ~1700 行、`client.js` ~3700 行
+- 流式事件序列补上 `revise`：`README.md`、`docs/USAGE.md`、`docs/ARCHITECTURE.md`
+- `docs/USAGE.md` 写明「最后一帧 `delta` 永远等于 `done.text`」
 
 ## [0.1.0] - 2026-11-02
 
