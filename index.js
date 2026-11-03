@@ -1410,17 +1410,31 @@ export function apply(ctx) {
       )
       if (corrected.text.length > 0) {
         const stillBad = bandViolation(activeStyle, text, corrected.text)
-        // 只接受确实更好的结果。
-        //
-        // 关键一条：重试后**反而超长**的，一律不接受。
-        // 早先只看「比上次长了」就收下，于是「补写」把 13 字的提问补成 93 字
-        // （上限 73）照样被记成 expanded —— 既破了上限，又把复核骗过去了。
+        /*
+         * 只接受**真的往合格方向走**的结果。
+         *
+         * 判据按「这一稿本身落在哪」分，不是按「比上一稿长还是短」：
+         *
+         *   重试稿合格（stillBad === null）  → 收下
+         *   仍超长、但比上一稿短             → 收下（同一方向上确实在收敛）
+         *   从超长变成过短                   → **不收**
+         *   从过短变成超长                   → **不收**
+         *
+         * 后两条是这次补的。早先只看「比上一稿短」就收，于是首稿超长、
+         * 重试删过头变成过短时，也被记成 trimmed —— 用户拿到的是被删空的原稿，
+         * 还标着「已按档位上限收敛」。**越过整个区间不是收敛。**
+         *
+         * 上一条（过短 → 超长）是上一版为「13 字提问被补成 93 字」补的，这里一并留下。
+         */
         const overshoot = stillBad !== null && stillBad.startsWith('too-long')
-        const better = !overshoot && (stillBad === null
+        const undershoot = stillBad !== null && stillBad.startsWith('too-short')
+        const better = stillBad === null
           || (violation.startsWith('too-long')
+            && !undershoot
             && corrected.text.length < optimized.length)
           || (violation.startsWith('too-short')
-            && corrected.text.length > optimized.length))
+            && !overshoot
+            && corrected.text.length > optimized.length)
         if (better) {
           optimized = corrected.text
           usedFree = corrected.usedFree

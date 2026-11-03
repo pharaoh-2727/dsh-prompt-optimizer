@@ -153,7 +153,8 @@ const limitFor = (styleId, len) => Math.min(
 
 const SOURCE = '帮我把这个插件的日志功能补上'
 const TOO_LONG = '补'.repeat(limitFor('detailed', SOURCE.length) + 200)
-const FIXED = '目标：补上日志功能。\n步骤：读入口、接入日志器、写一条日志、跑测试。\n产出：改动的文件清单。\n验收：测试通过且日志出现。'
+// 收敛稿要落在详细档区间内（原文 14 字 → [82, 164]），否则是「删过头」不是「收敛」。
+const FIXED = '目标：给这个插件的日志功能补上日志。\n步骤：1. 读入口文件，确认日志调用链；2. 接入统一日志器；3. 写一条启动日志；4. 跑一遍测试确认没有回归。\n产出：改动文件清单，以及每处改动的原因。\n验收：启动时日志按预期出现在对应级别，测试全绿。'
 
 async function runStream(handlers, payload) {
   const req = makeReq('/dsh-prompt-optimizer/stream', payload)

@@ -19,6 +19,7 @@ npm test          # 14 套离线测试，约 11 秒
 | `smoke-host.cjs` | 模块能 import、路由注册正确、`agent/request` 记路由、设置路由回得合理、命令/工具/服务返回同一份文本 |
 | `test-bands.cjs` | 三档长度公式与源码常量一致、三档上限严格递增、每档 prompt 写明了上限 |
 | `test-band-correction.cjs` | 超长 → 带修正指令重试（`adjusted='trimmed'`）；过短 → 补写重试（`'expanded'`）；一次到位不重试 |
+| `test-band-overshoot.cjs` | 重试稿「从超长变成过短」不许被记成收敛成功；同一方向上变短仍接受；落在区间内的照常接受 |
 | `test-input-kind.cjs` | 输入分类判据（a/b/c）与提示词一致：提问不设内容下限、不被强制补写；任务仍按下限补写 |
 | `test-dock-behaviour.cjs` | 预览卡三个真实缺陷：思考过程混进正文会被剥掉且默认收起、点「放弃」后结果不许再弹回、卡片只留在发起它的会话 |
 | `test-free-channel.cjs` | 401 归类为 auth 且不再撞端点、`?force=1` 会真请求、没密钥时 `no-key` 且不发请求、回退到对话模型 |
