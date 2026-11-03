@@ -1076,10 +1076,26 @@ async function main() {
   check('显示 token 用量（50 token）', /50 token/.test(cardText()), cardText())
   check('显示字数', new RegExp(optimizeText.length + ' 字').test(cardText()), cardText())
   check('模型名写在卡上', /space-bunny/.test(cardText()), cardText())
-  check('思考过程单独一块', (() => {
-    const node = cardNode('dsho-dock-reasoning')
-    return node !== null && /先确认任务范围/.test(textOf(node))
-  })())
+  /*
+   * 思考过程默认收起。
+   *
+   * 早先这里是展开显示的 —— 结果一次优化能推几百帧 reasoning（几千字），
+   * 正文却只有几十字，卡片里上下两坨长文字，用户分不清哪一版是要用的。
+   * 现在默认只留一行摘要，点开才看正文。判据因此改成：
+   *   块还在（不是删掉）、收起时不露出正文、点一下能展开。
+   */
+  check('思考过程单独一块', cardNode('dsho-dock-reasoning') !== null)
+  check('思考过程默认收起，不露出正文', !/先确认任务范围/.test(textOf(cardNode('dsho-dock-reasoning'))))
+  check('收起时标题带字数', /思考过程 · \d+ 字/.test(textOf(cardNode('dsho-dock-reasoning'))),
+    textOf(cardNode('dsho-dock-reasoning')))
+  const reasoningToggle = cardNode('dsho-dock-reasoning-title')
+  check('思考过程标题可点开', reasoningToggle !== null && typeof reasoningToggle.props.onClick === 'function')
+  if (reasoningToggle !== null && typeof reasoningToggle.props.onClick === 'function') {
+    reasoningToggle.props.onClick()
+    await tick(0)
+    check('展开后能看到思考正文', /先确认任务范围/.test(textOf(cardNode('dsho-dock-reasoning'))),
+      textOf(cardNode('dsho-dock-reasoning')))
+  }
   check('生成结束后「替换草稿」可用', (() => {
     const btn = cardButton('替换草稿')
     return btn !== null && btn.props.disabled !== true

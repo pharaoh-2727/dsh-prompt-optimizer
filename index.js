@@ -313,10 +313,6 @@ const STYLE_ITEMS = [
       '5. 去掉与目标无关的枝节表述；',
       '6. 原文已经足够清晰就只做最小改动。',
       '',
-      '自检（只对 c) 类）：如果输出里找不到明确的产出或验收口径，',
-      '先回看原文 —— 原文确实透露了交付意图而你没写出来，就是没做到本档目标；',
-      '原文本身没说要交付什么，就不要硬造。',
-      '',
       '增补的边界：只把原文已经有意的东西写具体。',
       '原文提到要交付，就写清交付什么；原文没说交付，就一个字的产出都不加。',
       '判断方法：输出里每一条要求，都能在原文里找到对应的词或半句话。',
@@ -586,17 +582,106 @@ function systemPromptFor(current, sceneContext) {
 }
 
 /**
- * 任务类输入的特征词。
+ * 判定输入属于哪一类：a) 寒暄 / b) 提问 / c) 任务。
  *
- * 用途只有一个：这类输入**本来就该展开**，不该被长度判据误伤。
- * 「帮我写一个登录页」只有 8 个字，详细档展开成 500 字是合理的；
- * 「ok，完成的很好」同样只有 9 个字，展开成 500 字就是噪声。
- * 区分二者的唯一可靠信号是——它是不是在要求做一件事。
+ * 判据不是这里发明的，是提示词里早就写好的那条（prompts/shared-common.txt 第 17 行）：
+ *   只要需要 DSH 读写文件、跑命令或查看工作区才能推进，一律算 c)；
+ *   只有不需要接触工作区的纯知识问答才算 b)。
+ * 所以这里找的是「指向工作区的字面信号」——路径、文件名、反引号里的命令、
+ * 报错原文、工作区名词配动作动词——而不是「句子里有没有动词」。
  *
- * 词表按 DSH 场景补齐：跑命令 / 读日志 / 装插件 / 改配置 这类说法，
- * 在通用词表里一个都没有，但它们恰恰是 DSH 用户最常写的短句。
+ * 为什么必须换掉旧词表：旧实现把 如何|怎么|为什么|能否|配置|插件|解释|分析
+ * 都算任务信号，于是**所有中文疑问句都被判成 c)**。判成 c) 的代价不是「多补一句」：
+ * 均衡/详细档会给它套上内容下限，模型只好给一句提问硬造「产出 / 验收」。
+ * 「怎么配置 profile？」13 字、下限 47 字，而提示词自己给的正例只有 38 字 ——
+ * 照提示词写反而被判不合格，重试后编出来的稿子长度合格，被收下还标成 expanded。
+ *
+ * 判定顺序是这份实现的关键，别调换：
+ *   1. 工作区字面信号 → c)（带路径/命令/报错的一律是任务，哪怕写成疑问句）
+ *   2. 请求词（帮我/给我/麻烦）→ c)
+ *   3. 工作区名词 + 动作动词 → c)（「看看我的 profile 配得对不对」）
+ *   4. 疑问句式 → b)（必须在「光有动词」之前：「怎么改」里的「改」是宾语，不是要执行的动作）
+ *   5. 有动作动词 → c)
+ *   6. 其余 → a)
+ *
+ * 判不准时这里**偏 b)**（不设内容下限）。这和提示词里「拿不准时按 c)」的方向相反，
+ * 是有意的：模型按 c) 多写一句，用户删掉即可；引擎按 c) 会强制重试并命令模型
+ * 「至少写 N 字」，模型只能编造。代价不对称，所以默认值必须相反。
  */
-const TASK_HINT = /(写|做|实现|创建|新建|生成|修改|重构|修复|优化|分析|解释|翻译|转换|整理|列出|设计|搭建|配置|安装|部署|检查|评审|对比|总结|拆解|梳理|帮我|帮忙|请帮|如何|怎么|为什么|能否|可以帮|跑|运行|执行|测试|调试|排查|定位|日志|脚本|依赖|编译|打包|提交|读取|写入|替换|批量|重启|升级|回滚|迁移|接入|对接|适配|插件|profile|配置项|槽位|设置页|命令|终端|报错|复现|write|create|build|make|fix|refactor|explain|analy|implement|design|run|test|debug|log|script|plugin|config|read|write|edit|grep|glob|patch|migrate|upgrade|compare|review)/iu
+
+/** 指向工作区的名词。出现它 + 动作动词，就是在说仓库里的事。 */
+const WS_NOUN = /(?:这个|该|本)?(?:仓库|项目|工作区|代码库|源码|目录|文件夹|工程)|(?:我的|本机的|自己的)(?:配置|设置|插件|环境)|profile|配置项|槽位|设置页|插件目录|日志文件/iu
+
+/** 路径或带扩展名的文件名。命中即任务，不用再看别的。 */
+const PATHY = /(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/])|(?:^|[\s(（「])(?:[\w.@-]+[\\/])+[\w.@-]+|[\w@.-]+\.(?:js|cjs|mjs|ts|tsx|jsx|json|md|txt|yml|yaml|toml|py|rs|go|java|sh|ps1|bat|css|html)\b/iu
+
+/** 反引号包起来的命令片段。 */
+const CODE_SPAN = /`[^`\n]+`/u
+
+/** 行首的命令。 */
+const COMMANDY = /(?:^|\n)\s*(?:\$|>|PS>|npm|pnpm|yarn|node|git|curl|cd|ls|dir|cat|grep|rg|sed|awk|python|pip|cargo|go |make|docker)\b/iu
+
+/** 贴出来的报错原文。 */
+const ERROR_TEXT = /(?:报错|错误|异常|堆栈|traceback|error|exception|失败)[\s\S]{0,40}(?:[A-Za-z]*Error\b|\bat\s+\S+\s*\(|:\s*\S+\.(?:js|ts|py):\d+|0x[0-9a-f]+)/iu
+
+/**
+ * 动作动词。
+ *
+ * 中文没有词边界，只能按「出现在串里」判；会不会误伤疑问句，靠判定顺序挡住
+ * （第 4 条疑问句式排在第 5 条前面）。
+ */
+const WS_VERB = /(?:看|查看|检查|读|打开|跑|运行|执行|安装|卸载|修改|修复|修掉|修好|改成|改掉|改一下|重构|整理|调试|排查|定位|提交|推送|回滚|升级|迁移|同步|扫描|统计|列出|导出|导入|解析|转换|替换|批量|搜索|找出|对比|评审|解释|换个|删掉|删除|新建|创建|生成|加上|添加|补上|补全|写个|改)/u
+
+/** 英文的动作动词，只在开头位置认。 */
+const EN_WS_VERB = /^\s*(?:please\s+)?(?:read|open|run|exec|execute|edit|write|create|build|make|fix|refactor|test|debug|install|uninstall|add|remove|delete|update|upgrade|migrate|check|review|compare|search|find|grep|patch|commit|push|revert|bump|rename|move|copy|sync|scan|list|dump|export|import|parse|convert|replace|split|merge|analyze|analyse|explain|show|print|tell me|give me|look at|look into)/iu
+
+/** 疑问句开头。 */
+const ASK_LEAD = /^\s*(?:请问|想问|问一下|问下|能否|能不能|可不可以|是不是|是否|要不要|需要不需要|怎么|如何|为什么|为啥|什么|啥|哪|谁|多少|多久|多大|几种|有没有|会不会|该不该|行不行|对不对|好不好)/iu
+
+/** 疑问句收尾：问号，或「吗 / 呢 / 么」结尾。 */
+const ASK_TAIL = /[？?]\s*$|(?:吗|呢|么)\s*[？?]?\s*$/u
+
+/** 句中出现疑问词（「同一个对话换模型是不是更省？」）。 */
+const ASK_ANY = /(?:怎么|如何|为什么|为啥|什么|啥|哪[个些里种]|多少|是否|能不能|可不可以|会不会|是不是|有没有|该不该|行不行|对不对|好不好)/u
+
+/**
+ * 请求词。放在「出现在哪儿都算」：emoji 或别的前缀不影响它的意思。
+ */
+const HELP_ANY = /(?:帮我|帮忙|请帮|麻烦|给我|替我|劳驾|求帮)/u
+
+/** 英文疑问句开头。 */
+const EN_ASK = /^\s*(?:how|what|why|when|where|which|who|can|could|should|would|is|are|does|do|did)\b/iu
+
+/** 是不是疑问句式。 */
+function looksLikeQuestion(s) {
+  return ASK_LEAD.test(s) || ASK_TAIL.test(s) || ASK_ANY.test(s) || EN_ASK.test(s)
+}
+
+/**
+ * 返回 'a' | 'b' | 'c'。判不准时返回 'b'（不设内容下限），理由见上面的注释。
+ */
+function classifyInput(raw) {
+  const s = String(raw ?? '').trim()
+  if (s.length === 0) return 'a'
+
+  // 1. 工作区字面信号：路径、命令、报错原文。哪怕写成疑问句，也是要动手的事。
+  if (PATHY.test(s) || CODE_SPAN.test(s) || COMMANDY.test(s) || ERROR_TEXT.test(s)) return 'c'
+
+  // 2. 明确的请求词。
+  if (HELP_ANY.test(s)) return 'c'
+
+  // 3. 工作区名词 + 动作动词。
+  if (WS_NOUN.test(s) && (WS_VERB.test(s) || EN_WS_VERB.test(s))) return 'c'
+
+  // 4. 疑问句式。必须在第 5 条之前，否则「怎么改」会被当成任务。
+  if (looksLikeQuestion(s)) return 'b'
+
+  // 5. 不是疑问句、又有动作动词。
+  if (WS_VERB.test(s) || EN_WS_VERB.test(s)) return 'c'
+
+  // 6. 寒暄 / 陈述。
+  return 'a'
+}
 
 /**
  * 判断改写是否"把一句话扩成了一篇文档"。
@@ -613,7 +698,7 @@ function looksOverExpanded(source, result) {
   const r = result.trim().length
   if (s.length === 0 || r === 0) return false
   // 任务类输入本来就该展开，直接放行。
-  if (TASK_HINT.test(s)) return false
+  if (classifyInput(s) === 'c') return false
   if (s.length <= 60 && r > 400 && r > s.length * 8) return true
   if (r > s.length * 12 && r > 1200) return true
   return false
@@ -675,7 +760,7 @@ function bandViolation(styleId, source, result) {
     return `too-long:${limit}`
   }
 
-  if (styleId !== 'brief' && TASK_HINT.test(s)) {
+  if (styleId !== 'brief' && classifyInput(s) === 'c') {
     const floor = floorFor(styleId, s.length, limit)
     if (floor > 0 && r.length < floor) {
       return `too-short:${floor}`
@@ -1909,4 +1994,7 @@ export {
   renderPrompt,
   dshScene,
   describeEnvironment,
+  // 输入分类（a 寒暄 / b 提问 / c 任务）。导出是给 dev/test-input-kind.cjs 用的：
+  // 判据的回归测试要能直接钉住分类结果，而不是隔着「重试了几次」去猜。
+  classifyInput,
 }

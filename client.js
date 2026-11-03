@@ -1500,6 +1500,14 @@ window.__ModuleLoader__.load({
         compareId: '',      // 选中对比的那条历史 id
         phase: 'idle',      // idle | running | ready
         requestId: '',      // 取消时凭它找到同一个任务
+        /*
+         * 这份结果是哪个会话的。
+         *
+         * previewStore 是模块级单例，一个浏览器标签只此一份 —— 但界面里可以
+         * 同时开着好几个对话。不记归属的话，在 A 里点优化、切到 B，
+         * B 的输入框上方照样挂着 A 的结果，用户会以为那是 B 的。
+         */
+        ownerSessionId: '',
         source: '',         // 发起优化时的输入
         original: '',       // 优化前的原文，用于「退回」
         result: '',         // 优化结果（流式过程中是「到目前为止」的正文）
@@ -1528,7 +1536,7 @@ window.__ModuleLoader__.load({
       reset() {
         // history 是账本，不随当前任务清空；viewing / compareId 属于当前视图，一起复位。
         this.set({
-          phase: 'idle', requestId: '', source: '', original: '',
+          phase: 'idle', requestId: '', ownerSessionId: '', source: '', original: '',
           result: '', conflict: false, meta: null, adopted: false,
           streaming: false, revising: '', reasoning: '', elapsedMs: null, usage: null,
           viewing: null, compareId: '', comparingOriginal: false,
@@ -1714,6 +1722,8 @@ window.__ModuleLoader__.load({
       previewStore.set({
         phase: 'running',
         requestId,
+        // 记下这次是谁发起的：切到别的对话时，卡片不该跟过去。
+        ownerSessionId: typeof sessionId === 'string' ? sessionId : '',
         // 开始新一次优化就退出历史视图，不然新结果被旧的那一版挡着。
         viewing: null,
         compareId: '',
@@ -1755,8 +1765,19 @@ window.__ModuleLoader__.load({
         },
         onText: (value) => {
           if (!isCurrent()) return
-          // 流式过程中正文是「到目前为止」的内容，直接替换。
-          previewStore.set({ result: typeof value === 'string' ? value : '' })
+          /*
+           * 流式过程中正文是「到目前为止」的内容，直接替换。
+           *
+           * 顺手剥掉混进来的思考段：结果最后要能一键写回输入框，
+           * 只在渲染时剥是不够的 —— 「复制」和「替换草稿」拿的都是这份 state。
+           * 用**当前**已收到的 reasoning 做判据，边收边剥。
+           */
+          previewStore.set({
+            result: stripReasoning(
+              typeof value === 'string' ? value : '',
+              previewStore.state.reasoning,
+            ),
+          })
         },
         onReasoning: (value) => {
           if (!isCurrent()) return
@@ -1777,6 +1798,17 @@ window.__ModuleLoader__.load({
       // 直接丢弃 —— 不写流水账、不改状态，让新请求自己跑完。
       if (!isCurrent()) return { ok: false, stale: true }
 
+      /*
+       * 用户在等待期间点了「放弃」：这次结果作废，不许再把卡片写回来。
+       *
+       * 放弃是把 phase 打回 'idle'，但 requestId 保持不动 —— 它仍指向这次请求。
+       * 所以「还是不是当前这次」判不出「用户已经关掉了」。done 一到就无条件
+       * 写 phase:'ready'，卡片于是又弹出来，用户得再关一次。
+       *
+       * 判据：这次请求已经被打回 idle，就说明用户亲手关掉了它。
+       */
+      if (previewStore.state.phase !== 'running') return { ok: false, dismissed: true }
+
       // 取消不是失败：不弹红色报错，直接回到原状。
       if (result.aborted === true) {
         previewStore.reset()
@@ -1789,10 +1821,12 @@ window.__ModuleLoader__.load({
 
       const current = typeof previewStore.getDraft === 'function' ? previewStore.getDraft() : ''
       const conflict = typeof current === 'string' && current.trim() !== source
+      // 收尾时 reasoning 已经完整，再剥一次 —— 流式期间可能还没收到那段思考。
+      const cleanText = stripReasoning(result.text, result.reasoning ?? previewStore.state.reasoning)
       // 结果到手就先记一版历史：用户点「重新优化」再跑一版时，上一版不能丢。
       pushHistory({
         source,
-        result: result.text,
+        result: cleanText,
         meta: {
           provider: result.provider,
           model: result.model,
@@ -1808,7 +1842,7 @@ window.__ModuleLoader__.load({
       })
       previewStore.set({
         phase: 'ready',
-        result: result.text,
+        result: cleanText,
         conflict,
         streaming: false,
         revising: '',
@@ -1935,9 +1969,18 @@ window.__ModuleLoader__.load({
       return state.conflict === true
     }
 
-    /** 放弃结果：草稿原样不动。 */
+    /**
+     * 放弃结果：草稿原样不动。
+     *
+     * 故意**不清 requestId**：它标的是「这一次请求」，runOptimize 收尾时靠
+     * phase 已经变回 idle 认出「用户关掉了」，不会再把卡片写回来。
+     * 清掉它反而会让那次请求在收尾时被当成「另一个请求」而多走一遍分支。
+     */
     function discardPreview() {
-      previewStore.set({ phase: 'idle', result: '', conflict: false, adopted: false })
+      previewStore.set({
+        phase: 'idle', result: '', conflict: false, adopted: false,
+        streaming: false, revising: '', reasoning: '',
+      })
     }
 
     /** 复制结果到剪贴板。传了 text 就复制那一份（历史版本），否则复制当前结果。 */
@@ -2689,6 +2732,42 @@ window.__ModuleLoader__.load({
     // ── 预览卡 ────────────────────────────────────────────────────────────
 
     /**
+     * 把混进正文里的思考段剥掉。
+     *
+     * 模型有两条通道：reasoning（思考）和 text（正文）。规矩的模型只把正文
+     * 放进 text，但实测有的模型会把「这一步该怎么做」一起塞进正文 ——
+     * 于是结果框里躺着模型的草稿纸，用户拿到的不是能发给 DSH 的提示词。
+     *
+     * 这里只做一件事：把**与 reasoning 完全相同的整段文字**从正文里摘掉。
+     * 不做模糊匹配 —— 提示词里出现和思考相似的词很正常，删错比留着更糟。
+     * 判据因此很保守：整行相等、且那一行足够长（短句到处都有，不能当证据）。
+     *
+     * @param {string} text 正文
+     * @param {string} reasoning 思考过程
+     * @returns {string} 去掉重复段后的正文
+     */
+    function stripReasoning(text, reasoning) {
+      const body = typeof text === 'string' ? text : ''
+      const think = typeof reasoning === 'string' ? reasoning : ''
+      if (body.length === 0 || think.length === 0) return body
+
+      const thinkLines = new Set(
+        think.split('\n').map((line) => line.trim()).filter((line) => line.length >= 8),
+      )
+      if (thinkLines.size === 0) return body
+
+      const kept = body.split('\n').filter((line) => {
+        const trimmed = line.trim()
+        // 只认「整行都在思考里出现过」的行；空行一律保留，段落结构不能塌。
+        if (trimmed.length < 8) return true
+        return !thinkLines.has(trimmed)
+      })
+      const stripped = kept.join('\n').replace(/\n{3,}/gu, '\n\n').trim()
+      // 全被剥光说明判错了 —— 宁可原样给出，也不要交一张空白卡片。
+      return stripped.length === 0 ? body : stripped
+    }
+
+    /**
      * 优化结果预览卡，挂在输入框上方的 conversation.input.dock。
      *
      * 结果不直接盖住草稿 —— 先摆在这里，用户看清了再决定：
@@ -2718,6 +2797,15 @@ window.__ModuleLoader__.load({
       const [resizing, setResizing] = useState(false)
       // 历史列表是否展开（默认收起，不占地方）。
       const [historyOpen, setHistoryOpen] = useState(false)
+      /*
+       * 思考过程默认收起。
+       *
+       * 实测一次优化能推 500+ 帧 reasoning（几千字），而结果正文只有几十字。
+       * 展开着摆的话，卡片里是「一大坨草稿纸 + 一小段结果」上下两团，
+       * 用户根本分不清哪一版是要用的 —— 这正是「出现两版」的来源。
+       * 默认只留一行「思考过程 · N 字」，想看再点开。
+       */
+      const [reasoningOpen, setReasoningOpen] = useState(false)
       const frameRef = useRef(null)
       const dragRef = useRef(null)
       const edgeDragRef = useRef(null)
@@ -3117,6 +3205,20 @@ window.__ModuleLoader__.load({
       // 流式过程中也要显示预览卡：用户在等的时候得看见字在长。
       if (state.phase !== 'ready' && state.phase !== 'running') return null
 
+      /*
+       * 卡片只显示在发起它的那个对话里。
+       *
+       * previewStore 是模块级单例，一个标签页只有一份；界面里却能同时开着
+       * 好几个对话。不按归属过滤的话，在 A 里点优化、切到 B，B 的输入框上方
+       * 照样挂着 A 的结果 —— 用户会以为那是 B 的。
+       *
+       * 没记归属（老状态、或者拿不到 sessionId）时不拦：宁可显示，也不要
+       * 因为拿不到 id 就把用户的结果藏起来。
+       */
+      const owner = typeof state.ownerSessionId === 'string' ? state.ownerSessionId : ''
+      const mine = typeof props.sessionId === 'string' ? props.sessionId : ''
+      if (owner.length > 0 && mine.length > 0 && owner !== mine) return null
+
       const meta = state.meta || {}
       const metaParts = []
       if (meta.model) metaParts.push(meta.model)
@@ -3161,7 +3263,9 @@ window.__ModuleLoader__.load({
        */
       const history = Array.isArray(state.history) ? state.history : []
       const viewing = state.viewing && typeof state.viewing === 'object' ? state.viewing : null
-      const shownText = viewing ? viewing.result : state.result
+      const shownText = viewing
+        ? viewing.result
+        : stripReasoning(state.result, state.reasoning)
       const compareEntry = viewing && state.compareId
         ? history.find((item) => item.id === state.compareId) || null
         : null
@@ -3387,11 +3491,28 @@ window.__ModuleLoader__.load({
               '你在等待期间改过输入框，这份结果不会覆盖你新写的内容。'
               + '想用就复制，或重新优化一次。')
           : null,
-        // 模型的思考过程：模型不给就没有这一块，给了就单独显示。
+        /*
+         * 模型的思考过程：模型不给就没有这一块。
+         *
+         * 默认收起 —— 它是旁注，不是结果。展开与否只影响显示，不影响正文。
+         */
         state.reasoning !== undefined && state.reasoning !== null && state.reasoning.length > 0
-          ? h('div', { className: 'dsho-dock-reasoning' },
-              h('div', { className: 'dsho-dock-reasoning-title' }, '思考过程'),
-              h('div', { className: 'dsho-dock-reasoning-body' }, state.reasoning))
+          ? h('div', {
+              className: 'dsho-dock-reasoning',
+              'data-open': reasoningOpen ? 'true' : 'false',
+            },
+              h('button', {
+                type: 'button',
+                className: 'dsho-dock-reasoning-title',
+                'aria-expanded': reasoningOpen ? 'true' : 'false',
+                title: reasoningOpen ? '收起思考过程' : '展开看模型的思考过程',
+                onClick: () => { setReasoningOpen((open) => !open) },
+              }, reasoningOpen
+                ? '思考过程'
+                : '思考过程 · ' + state.reasoning.length + ' 字'),
+              reasoningOpen
+                ? h('div', { className: 'dsho-dock-reasoning-body' }, state.reasoning)
+                : null)
           : null,
         /*
          * 结果正文区：位置固定（普通文档流），高度随卡片走。

@@ -231,12 +231,15 @@ async function main() {
 
   // ── 场景 4：补写之后又超长 → 必须拒绝这次重试结果 ────────────────────
   //
-  // 真实案发现场：13 字的提问「怎么配置 profile？」在均衡档被写成 93 字，
-  // 上限只有 73。第一次判「过短」，重试后变成「过长」，旧逻辑只看长度有没有
-  // 变大就接受了 —— 结果既没守住上限、还标成 expanded 骗过了复核。
+  // 真实案发现场：13 字的一句短输入在均衡档被写成 93 字，上限只有 73。
+  // 第一次判「过短」，重试后变成「过长」，旧逻辑只看长度有没有变大就接受了 ——
+  // 结果既没守住上限、还标成 expanded 骗过了复核。
+  //
+  // 这里用 c) 类任务当输入：判据改成「要碰工作区才算任务」之后，b) 类提问
+  // 根本不会触发内容下限，用提问做这个场景就测不到「过短 → 过长」这条路径了。
   {
     const mod = await loadPlugin('balanced')
-    const source = '怎么配置 profile？'
+    const source = '看看我的 profile 配得对不对'
     const cap = limitFor('balanced', source.length)
     const overlong = '补'.repeat(cap + 30)          // 重试后又超长
     const { ctx, handlers } = makeCtx([source, overlong])
