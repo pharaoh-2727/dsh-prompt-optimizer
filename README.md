@@ -1,13 +1,21 @@
 # dsh-prompt-optimizer
 
-**DeepSeek Harness 专用提示词优化插件。** 写完一段话按一下 ✨，让模型把它改写成 DSH 能直接照做的提示词 —— 带动作、带产出、带验收标准。
+**DeepSeek Harness 专用提示词优化插件。** 写完一段话按一下 ✨，让模型把它改写成 DSH 更容易照做的提示词。
+
+改写按输入性质分流，不会把一句话一律拉长：
+
+| 你写的 | 插件做的 |
+|---|---|
+| 任务要求（要 DSH 动手） | 补齐含糊处，写明交付什么、怎样算完成 |
+| 提问 | 把问题问清楚，**不替你回答，也不硬造产出** |
+| 确认 / 道谢 / 闲聊 | 只调整语气和标点 |
 
 - 六个入口同一份实现：输入框按钮、会话标题旁 ✨、**Alt+O**、斜杠命令 `/optimize`、给模型的工具 `optimize_prompt`、给插件的服务 `promptOptimizer`
 - 流式生成（换稿时先说清原因）、预览卡确认（不直接盖掉你的草稿）、历史版本与逐行对比
 - 三档力度：**精简 / 均衡 / 详细**，每档有独立的长度上限与禁令
 - 零配置可用：默认跟随当前对话正在用的模型
 
-> 这是 [`dsh-prompt-enhancer`](https://github.com/MCJF28/dsh-prompt-enhancer)（MIT）的 DSH 场景适配版。架构、交互、配置与上游一致，差异只有一处：改写规则里的「场景约定」换成了 DeepSeek Harness 的真实用法（`@` 文件引用、工作区、工具面、可判定的验收口径）。详见 [CHANGELOG](CHANGELOG.md)。
+> 这是 [`dsh-prompt-enhancer`](https://github.com/MCJF28/dsh-prompt-enhancer)（MIT）的 DSH 场景适配版。架构、交互、配置与上游一致，差异只在改写规则：「场景约定」换成了 DeepSeek Harness 的真实用法（`@` 文件引用、工作区、工具面、可判定的验收口径），输入性质的判据也按 DSH 的实际情况重写。
 
 ---
 
@@ -53,7 +61,7 @@ cp -r dsh-prompt-optimizer ~/.dsh/plugins/
 | **均衡**（默认） | ≤ max(1.6 × 原文, 原文 + 80 字) | 补齐含糊处，写明交付什么、怎样算完成 |
 | **详细** | ≤ max(2.2 × 原文, 原文 + 150 字) | 补齐目标 / 上下文 / 步骤 / 产出格式 / 验收标准，步骤 ≤ 6 条 |
 
-上限公式统一是 **max(原文 × 倍数, 原文 + 加字额度)**：短输入靠加字额度给模型喘息空间，长输入自动切回倍数封顶。
+上限公式统一是 **max(原文 × 倍数, 原文 + 加字额度)**：短输入靠加字额度给模型喘息空间，长输入自动切回倍数封顶。三档还各有封顶（1500 / 2500 / 4000 字）。
 
 **优化器只做改写，绝不答题。** 你写的是任务要求、简单提问还是闲聊，输出永远是「改写后的提示词」，不是对它的回答。
 
@@ -89,12 +97,14 @@ DSH_FREE_CHANNEL_MODEL=your-model                    # 可选，默认 DeepSeek-
 
 ```bash
 npm run check        # 两个入口文件的语法检查
-npm test             # 14 套离线测试（约 11 秒）
+npm test             # 离线测试，不需要 DSH 在跑
 ```
 
 测试不依赖 DSH 在跑：宿主半区用假 `ctx`，客户端半区用最小 React 桩 + 微型渲染器直接跑 `client.js`。跑测试时 `DSH_PROFILE_DIR` 会被清掉，需要的默认模型由 `dev/stub-model.cjs` 现场造 —— 所以同一份测试在别人的机器上也该是绿的。
 
 改提示词：提示词拆成 `dev/prompts/` 下 5 个纯文本文件，改完用 `npm run prompts:apply` 写回 `index.js`。细节见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+
+发版流程与发布说明的写法见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
@@ -104,9 +114,9 @@ npm test             # 14 套离线测试（约 11 秒）
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | 每个界面元素的用法、快捷键、边界情况 |
 | [docs/INSTALL.md](docs/INSTALL.md) | 三种装法、卸载、升级、排错 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码骨架：六个入口如何收敛、路由、流式、取消 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码骨架：六个入口如何收敛、输入分类、路由、流式、取消 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地开发、测试、改提示词、发版流程 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变更（含每一版改了什么） |
 | [docs/releases/](docs/releases/) | 每个版本的发布说明（与 GitHub Release 正文同一份，格式见 [TEMPLATE.md](docs/releases/TEMPLATE.md)） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 提交与 PR 约定 |
 
