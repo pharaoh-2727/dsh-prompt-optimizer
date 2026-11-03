@@ -268,7 +268,14 @@ async function main() {
         }
       })
 
-      if (!isEmpty) {
+      /*
+       * 短到没有信息可补的输入会被直通（原样返回、不调模型），见 index.js 的
+       * MIN_MEANINGFUL_CHARS。这类输入没有系统提示可查，跳过这条断言 ——
+       * 它的契约由 test-audit-fixes.cjs 单独钉住（不调模型、原样返回）。
+       */
+      const passthrough = run.a.systems.length === 0 && run.bodyOptimize?.ok === true
+
+      if (!isEmpty && !passthrough) {
         await checkAsync('[' + label + '] 系统提示带上了工作区', async () => {
           if (run.a.systems.length === 0) throw new Error('根本没调用模型')
           if (!run.a.systems[0].includes(WORKSPACE)) throw new Error("没带上工作区")
@@ -280,6 +287,8 @@ async function main() {
           if (run.bodyOptimize.ok === false) return
           throw new Error("流里没有 done 事件")
         }
+        // 直通时流里没有任何 delta，末帧是空串，而 done.text 是原文 —— 这是对的。
+        if (passthrough && run.lastDelta === '') return
         if (run.lastDelta !== run.doneEvent.data.text) {
           throw new Error("末帧 " + run.lastDelta.length + " 字 ≠ done " + run.doneEvent.data.text.length + " 字")
         }

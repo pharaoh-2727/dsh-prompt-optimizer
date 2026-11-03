@@ -72,6 +72,29 @@ const SETTINGS_FILE = join(SETTINGS_DIR, 'settings.json')
 const MAX_INPUT_CHARS = 20000
 
 /**
+ * 短到这个程度就没有可补的信息，原样返回。
+ *
+ * 见 optimizeText 里的说明：1 个字的「改」被补成 117 字套话，比不改更糟。
+ */
+const MIN_MEANINGFUL_CHARS = 4
+
+/**
+ * 一次优化的时间预算（毫秒）。超了就不再走补救路径。
+ *
+ * 线上实测：模型慢的时候首字要 50 秒，一次优化 90 秒以上；而补救路径
+ * （过度扩写拉回、档位收敛/补齐）会再串一次完整模型调用，最坏串三次。
+ * 用户等两分钟，看到的是「优化中」一直转。
+ *
+ * 补救是「更好」，不是「能看」。为它多等一分钟不值 —— 超预算就把手上的
+ * 结果交出去，并在结果里标出来，别假装补救过了。
+ */
+const OPTIMIZE_BUDGET_MS = (() => {
+  // 测试要把它调到毫秒级才测得出「超预算」，所以认一个环境变量。
+  const raw = Number(process.env.DSHO_OPTIMIZE_BUDGET_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 60000
+})()
+
+/**
  * 进行中的优化任务：requestId → AbortController。
  *
  * 取消不能只靠浏览器断开连接：模型调用已经在宿主进程里跑着了，
@@ -222,6 +245,9 @@ const COMMON = [
   '5. 只输出改写后的提示词正文本身。第一句就是改写结果，最后一句就是结尾；',
   '   「以下是优化后的提示词」这类引导语和包裹用的引号都省掉。',
   '6. 保持用户原本的语言：中文输入输出中文，英文输入输出英文。',
+  '   英文输入同样要按档位规则改写 —— 该补的产出、验收、步骤一样要补，',
+  '   只是换成英文写。不要只把首字母大写、或者加一个 "Goal:" 前缀就算改完；',
+  '   那样等于一个字都没动。英文的结构词用 Goal / Steps / Output / Acceptance。',
   '7. 约束冲突时的取舍顺序：不新增信息 > 说清楚 > 长度上限。',
   '   为守住前两条允许适度超出长度上限，但不得为守长度而删掉原文信息。',
 ].join('\n')
@@ -652,6 +678,17 @@ const HELP_ANY = /(?:帮我|帮忙|请帮|麻烦|给我|替我|劳驾|求帮)/u
 /** 英文疑问句开头。 */
 const EN_ASK = /^\s*(?:how|what|why|when|where|which|who|can|could|should|would|is|are|does|do|did)\b/iu
 
+/**
+ * 延续性输入：接着上文说的。
+ *
+ * 这类句子单独看没有任何信息，但它**是任务** —— 用户在上一条消息的基础上
+ * 要求继续、重来、或者指出哪里不对。判成 a)（闲聊）会一个字都不改，
+ * 用户点了一次「优化」却什么都没发生。
+ *
+ * 判成 c) 至少会交给模型：模型能看到它自己的理解，比原样返回强。
+ */
+const CONTINUATION = /^\s*(?:继续|接着|接着做|接着来|往下|再来|再来一次|重来|重新来|重做|redo|continue|go on|next)\s*[。.!！]?\s*$|^\s*(?:这个|这里|那个|那里)?\s*(?:不对|错了|有问题|不行)\s*[。.!！]?\s*$|按(?:刚才|之前|上面|前面)的/iu
+
 /** 是不是疑问句式。 */
 function looksLikeQuestion(s) {
   return ASK_LEAD.test(s) || ASK_TAIL.test(s) || ASK_ANY.test(s) || EN_ASK.test(s)
@@ -664,22 +701,34 @@ function classifyInput(raw) {
   const s = String(raw ?? '').trim()
   if (s.length === 0) return 'a'
 
-  // 1. 工作区字面信号：路径、命令、报错原文。哪怕写成疑问句，也是要动手的事。
-  if (PATHY.test(s) || CODE_SPAN.test(s) || COMMANDY.test(s) || ERROR_TEXT.test(s)) return 'c'
-
-  // 2. 明确的请求词。
+  // 1. 明确的请求词。「帮我」「给我」压过一切 —— 带疑问词的请求仍是请求。
   if (HELP_ANY.test(s)) return 'c'
 
-  // 3. 工作区名词 + 动作动词。
+  // 2. 延续性输入：接着上文说的，本身就是任务。
+  if (CONTINUATION.test(s)) return 'c'
+
+  // 3. 工作区名词 + 动作动词（「看看我的 profile 配得对不对」）。
+  //    这一条必须排在疑问判断之前：「对不对」是疑问词，但整句是要动手的事。
   if (WS_NOUN.test(s) && (WS_VERB.test(s) || EN_WS_VERB.test(s))) return 'c'
 
-  // 4. 疑问句式。必须在第 5 条之前，否则「怎么改」会被当成任务。
+  /*
+   * 4. 疑问句式 → b)。
+   *
+   * 这一条必须排在「工作区字面信号」之前。早先路径排第一，于是
+   * 「src/app.ts 为什么这么慢？」「package.json 里的 scripts 是干嘛的？」
+   * 都被判成任务、套上内容下限 —— 用户只是在问，却被逼着补产出。
+   *
+   * 判断依据是句式，不是有没有路径：带路径的提问仍是提问。
+   */
   if (looksLikeQuestion(s)) return 'b'
 
-  // 5. 不是疑问句、又有动作动词。
+  // 5. 工作区字面信号：路径、命令、报错原文。
+  if (PATHY.test(s) || CODE_SPAN.test(s) || COMMANDY.test(s) || ERROR_TEXT.test(s)) return 'c'
+
+  // 6. 不是疑问句、又有动作动词。
   if (WS_VERB.test(s) || EN_WS_VERB.test(s)) return 'c'
 
-  // 6. 寒暄 / 陈述。
+  // 7. 寒暄 / 陈述。
   return 'a'
 }
 
@@ -717,7 +766,16 @@ function lengthLimitFor(styleId, sourceLength) {
   const band = STYLE_BANDS[styleId] ?? STYLE_BANDS.balanced
   const byRatio = sourceLength * band.ratioMax
   const byPlus = sourceLength + band.plusChars
-  return Math.min(band.absMax, Math.round(Math.max(byRatio, byPlus)))
+  /*
+   * 下限兜底：上限永远不低于原文。
+   *
+   * 早先只按 absMax 截顶，于是 5000 字的输入在详细档上限只有 4000 ——
+   * 上限比原文还短，等于要求「把长文压成短文」。那不是优化提示词，
+   * 是把用户写的东西砍掉。档位复核还会因此判它超长、逼模型删内容。
+   *
+   * 长输入时 absMax 只该封顶「加出来的部分」，不该把原文本身也砍掉。
+   */
+  return Math.max(sourceLength, Math.min(band.absMax, Math.round(Math.max(byRatio, byPlus))))
 }
 
 /**
@@ -1165,6 +1223,36 @@ export function apply(ctx) {
       throw error
     }
 
+    /*
+     * 短到没有信息可补的输入：原样返回，不调模型。
+     *
+     * 「改」只有 1 个字。线上实测它被补成 117 字的空话 ——
+     * 「目标：执行"改"所指向的变更操作，使相应对象发生预期变化。
+     *   产出格式：交付变更后的产物，形态为修改后的文件……」
+     * 原文没有任何可补的信息，模型只能造套话；而档位下限又会逼它把套话写够长。
+     * 这不是优化，是把用户的一句话换成一段谁都能说的话。
+     *
+     * 阈值取 4 个字：「改」「重来」「继续」这类都归到这里；
+     * 「跑测试」（3 字）也归到这里 —— 它同样补不出东西。
+     * 但「帮我写个登录页」（7 字）照常送模型，它真的有信息可补。
+     */
+    if (text.length < MIN_MEANINGFUL_CHARS) {
+      return {
+        ok: true,
+        text,
+        provider: 'none',
+        model: 'none',
+        style: settings.style,
+        source: 'passthrough',
+        recovered: false,
+        adjusted: null,
+        reasoning: null,
+        usage: null,
+        elapsedMs: 0,
+        freeChannel: { enabled: false, used: false, error: null },
+      }
+    }
+
     const sessionId = typeof options?.sessionId === 'string' ? options.sessionId : ''
     const startedAt = Date.now()
     // 设置快照：一次优化跑到一半时用户去设置页换档，不该中途换提示词。
@@ -1337,7 +1425,17 @@ export function apply(ctx) {
         model: route.model,
         system,
         messages: [{ role: 'user', content: [{ type: 'text', text: input }] }],
-        maxTokens: 4096,
+        /*
+         * 按「思考 + 正文」两部分来定，不是只按正文估。
+         *
+         * 线上实测：思考 5773 字（outputTokens 3391），正文 52 字 —— 而这里
+         * 原本只给 4096。思考花掉 3391 就只剩 700 给正文，思考再长一点正文
+         * 就是空串，用户看到「优化完成」却什么都没有。
+         *
+         * 正文最长是 4000 字（详细档封顶），按中文约 1 字 1 token 估；
+         * 思考留 6000；再加 2000 余量。
+         */
+        maxTokens: 12000,
         signal: abort,
       })
       // 有 hooks 就用 consumeStream：同一路流，一边收一边把累计正文推给界面。
@@ -1370,11 +1468,28 @@ export function apply(ctx) {
       throw error
     }
 
+    /*
+     * 时间预算：已经花掉多少，还剩多少给补救路径。
+     *
+     * 补救是锦上添花。模型慢的时候（首字 50 秒那种），把补救也做完就是
+     * 两分钟起步。宁可交一份没补救过但能看的结果，也别让用户干等。
+     */
+    const spentMs = Date.now() - startedAt
+    const budgetLeft = OPTIMIZE_BUDGET_MS - spentMs
+    /*
+     * 还剩多少才算「够再补救一次」：拿第一稿的耗时当估算。
+     * 只判 budgetLeft > 0 是不够的 —— 剩 300ms 时放行，重试又要 600ms，
+     * 用户照样等满。剩余时间连一次同等耗时的调用都不够，就别开始。
+     */
+    const budgetEnough = budgetLeft > spentMs
+
     // 工程兜底：提示词改好了，但仍不排除模型把一句话扩成文档。
     // 判据 —— 短输入配上了远超它的输出：这说明改写方向跑偏了。
     // 此时改用最克制的「精简」档重试一次；取更短的结果，避免把噪声交给用户。
     let recovered = false
-    if (looksOverExpanded(text, optimized)) {
+    if (!budgetEnough) {
+      // 预算不够再补救一次，一条都不走。
+    } else if (looksOverExpanded(text, optimized)) {
       // 先说清楚要重写，界面才不会「字停住了、然后整段变掉」。
       liveHooks?.onRevise?.({
         reason: 'recovered',
@@ -1397,7 +1512,8 @@ export function apply(ctx) {
     let adjusted = null
     const activeStyle = current.style
     const violation = bandViolation(activeStyle, text, optimized)
-    if (violation !== null && activeStyle !== 'custom') {
+    // 预算不够就不复核了：见 OPTIMIZE_BUDGET_MS 的说明。
+    if (violation !== null && activeStyle !== 'custom' && budgetEnough) {
       liveHooks?.onRevise?.({
         reason: violation.startsWith('too-long') ? 'trimmed' : 'expanded',
         text: violation.startsWith('too-long')

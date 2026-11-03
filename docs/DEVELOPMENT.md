@@ -20,6 +20,7 @@ npm test          # 14 套离线测试，约 11 秒
 | `test-bands.cjs` | 三档长度公式与源码常量一致、三档上限严格递增、每档 prompt 写明了上限 |
 | `test-band-correction.cjs` | 超长 → 带修正指令重试（`adjusted='trimmed'`）；过短 → 补写重试（`'expanded'`）；一次到位不重试 |
 | `test-band-overshoot.cjs` | 重试稿「从超长变成过短」不许被记成收敛成功；同一方向上变短仍接受；落在区间内的照常接受 |
+| `test-audit-fixes.cjs` | 暴力测试查出的六个问题：极短输入直通不调模型、延续性输入判成任务、英文按档位补全、带路径的提问不判成任务、长输入上限不低于原文、慢模型不串行补救（时间预算） |
 | `test-input-kind.cjs` | 输入分类判据（a/b/c）与提示词一致：提问不设内容下限、不被强制补写；任务仍按下限补写 |
 | `test-dock-behaviour.cjs` | 预览卡三个真实缺陷：思考过程混进正文会被剥掉且默认收起、点「放弃」后结果不许再弹回、卡片只留在发起它的会话 |
 | `test-free-channel.cjs` | 401 归类为 auth 且不再撞端点、`?force=1` 会真请求、没密钥时 `no-key` 且不发请求、回退到对话模型 |
