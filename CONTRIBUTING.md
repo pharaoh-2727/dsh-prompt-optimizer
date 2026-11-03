@@ -27,6 +27,45 @@ npm test         # 14 套离线测试，约 11 秒
 - 注释写**为什么**，不写**做什么**
 - 宿主（`index.js`）与客户端（`client.js`）不共享代码 —— 两边各留一份需要的常量，比加一层共享模块更容易读
 
+## 发版
+
+发布说明写给**插件使用者**，不是写给自己看的技术复盘。结构固定：
+
+```markdown
+# v0.x.y
+
+无破坏性改动（有就写清楚）。升级方式见 [docs/INSTALL.md](...)，装法 A/B/C 都适用，覆盖文件后重启 DSH 即可。
+
+## 修复
+
+- **一句话说清改了什么**：用户能感知到的变化
+
+## 改动
+
+- 顺带的调整
+```
+
+硬规则：
+
+- **只写「升级了什么」，不写「为什么坏、怎么坏的」**。症状、成因、根因分析留在 PR 和 commit 里
+- **不写测试**。几套、跑多久是给贡献者看的，用户用不上，而且每版都要改数字，容易漏
+- **不写实现细节**。事件名、字段名、兼容性差异，除非用户必须知道
+- 小节按需出现：没有「改动」就删掉这一节
+
+发版步骤：
+
+```bash
+# 1. 改 package.json 的 version（补丁修 bug、次版本加功能）
+# 2. CHANGELOG 把 [未发布] 收成 [x.y.z]，新开一个空的 [未发布]
+# 3. 写 docs/releases/vx.y.z.md
+# 4. 提交 + 打 tag
+git tag -a vx.y.z -m "vx.y.z：一句话概括"
+git push origin master vx.y.z
+
+# 5. 建 GitHub Release
+gh release create vx.y.z --title "vx.y.z —— 一句话概括" --notes-file docs/releases/vx.y.z.md
+```
+
 ## 提 issue
 
 请带上：

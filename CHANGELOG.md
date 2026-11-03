@@ -3,6 +3,9 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化](https://semver.org/lang/zh-CN/)。
 
+这里的记录可以详细，写给维护者；**面向用户的发布说明**另写一份，
+格式见 `docs/releases/TEMPLATE.md`，只写升级了什么。
+
 ## [未发布]
 
 ## [0.1.2] - 2026-11-03

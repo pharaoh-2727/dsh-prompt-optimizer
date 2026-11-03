@@ -107,7 +107,7 @@ npm test             # 14 套离线测试（约 11 秒）
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码骨架：六个入口如何收敛、路由、流式、取消 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地开发、测试、改提示词、发版流程 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
-| [docs/releases/](docs/releases/) | 每个版本的发布说明（与 GitHub Release 正文同一份） |
+| [docs/releases/](docs/releases/) | 每个版本的发布说明（与 GitHub Release 正文同一份，格式见 [TEMPLATE.md](docs/releases/TEMPLATE.md)） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 提交与 PR 约定 |
 
 ---
