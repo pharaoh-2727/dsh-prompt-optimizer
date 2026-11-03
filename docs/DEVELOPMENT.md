@@ -7,7 +7,7 @@
 
 ```bash
 npm run check     # 两个入口文件的语法检查
-npm test          # 12 套离线测试，约 6 秒
+npm test          # 14 套离线测试，约 11 秒
 ```
 
 ## 测试
@@ -137,7 +137,7 @@ gh release create vX.Y.Z --title "vX.Y.Z —— 一句话说清这版是什么" 
 ## 提交前自查
 
 - [ ] `npm run check` 通过
-- [ ] `npm test` 全绿（12 套）
+- [ ] `npm test` 全绿（14 套）
 - [ ] 没有把本机绝对路径写进源码或测试
 - [ ] 没有提交任何密钥（`.env`、`settings.json` 已在 `.gitignore` 里）
 - [ ] 用户可见的变化已经写进 `CHANGELOG.md`

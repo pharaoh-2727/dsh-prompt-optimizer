@@ -247,15 +247,15 @@ const STYLE_BANDS = {
 
 ```
 .
-├── index.js            宿主半区（~1900 行）
-├── client.js           客户端半区（~3700 行）
+├── index.js            宿主半区（~2000 行）
+├── client.js           客户端半区（~3800 行）
 ├── cordis.patch.yml    bundle patch：声明插件的 id 与包名
 ├── package.json        版本、exports、dsh 元数据
 ├── dev/
 │   ├── run-all.cjs         一键跑全部测试
 │   ├── stub-model.cjs      测试用的默认模型桩
 │   ├── smoke-host.cjs      宿主半区冒烟
-│   ├── test-*.cjs          12 套行为测试
+│   ├── test-*.cjs          14 套行为测试
 │   ├── dump-prompts.mjs    index.js → prompts/*.txt
 │   ├── apply-prompts.mjs   prompts/*.txt → index.js
 │   └── prompts/            三档提示词的可编辑源文件
