@@ -110,7 +110,8 @@ async function main() {
   const re = /(\w+): \{ ratioMax: ([\d.]+), plusChars: (\d+), absMax: (\d+) \}/g
   let m
   while ((m = re.exec(src)) !== null) bands[m[1]] = { r: +m[2], p: +m[3], max: +m[4] }
-  const limitFor = (id, len) => Math.min(bands[id].max, Math.round(Math.max(len * bands[id].r, len + bands[id].p)))
+  // 与 index.js 的 lengthLimitFor 同式，含「不低于原文」的兜底。
+  const limitFor = (id, len) => Math.max(len, Math.min(bands[id].max, Math.round(Math.max(len * bands[id].r, len + bands[id].p))))
   const floorFor = (id, len) => {
     const L = limitFor(id, len)
     return Math.min(Math.max(Math.round(L * 0.5), len + 20), L - 1)
@@ -185,15 +186,24 @@ async function main() {
   } else {
     // 判据是「整行相同且 >= 8 字」。检查它会不会把正常正文误删。
     // 用同样的逻辑在本地跑一遍（复制规则，不改源码）。
+    // 与 client.js 的 stripReasoning 同式（含重合度门槛）。
     const strip = (body, think) => {
       if (!body || !think) return body
       const set = new Set(think.split('\n').map(s => s.trim()).filter(s => s.length >= 8))
       if (set.size === 0) return body
-      const kept = body.split('\n').filter(line => {
+      const lines = body.split('\n')
+      const cands = lines.filter(l => l.trim().length >= 8)
+      if (cands.length === 0) return body
+      const matched = cands.filter(l => set.has(l.trim())).length
+      const echoWhole = matched * 2 > cands.length
+      const leaked = (line) => {
         const t = line.trim()
-        if (t.length < 8) return true
-        return !set.has(t)
-      })
+        if (t.length < 8) return false
+        if (!set.has(t)) return false
+        return t.length >= 20 || echoWhole
+      }
+      if (!cands.some(leaked)) return body
+      const kept = lines.filter(line => !leaked(line))
       const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
       return out.length === 0 ? body : out
     }

@@ -2756,12 +2756,40 @@ window.__ModuleLoader__.load({
       )
       if (thinkLines.size === 0) return body
 
-      const kept = body.split('\n').filter((line) => {
+      /*
+       * 只在「思考明显在复述正文」时才剥。
+       *
+       * 判据是重合度：正文里有几行能在思考里找到。零星一行重合是巧合 ——
+       * 思考里常会先写下「目标：更新 README。」这样的提纲，正文里也这么写，
+       * 那是用户要的东西，不是漏出来的思考。删掉它等于删掉正文。
+       *
+       * 真正漏出来的时候是成段重合：思考把整份正文都过了一遍。
+       * 所以要求「重合行占正文可剥行的多数」才动手。
+       */
+      const bodyLines = body.split('\n')
+      const candidates = bodyLines.filter((line) => line.trim().length >= 8)
+      if (candidates.length === 0) return body
+      const matched = candidates.filter((line) => thinkLines.has(line.trim())).length
+      /*
+       * 两种才算漏出来的思考，其余一律不动：
+       *
+       *   a) 这一行很长（≥20 字）而且思考里也有 —— 一整句思考原样出现在正文里，
+       *      基本不可能是巧合。漏出来的典型样子就是这样。
+       *   b) 正文大多数行都能在思考里找到 —— 整份正文被思考复述过一遍。
+       *
+       * 短行重合不算：「目标：更新 README。」这种提纲句，思考里会写，正文里
+       * 用户也要写。把它当漏出来的思考删掉，删的是正文本身。
+       */
+      const echoWhole = matched * 2 > candidates.length
+      const leaked = (line) => {
         const trimmed = line.trim()
-        // 只认「整行都在思考里出现过」的行；空行一律保留，段落结构不能塌。
-        if (trimmed.length < 8) return true
-        return !thinkLines.has(trimmed)
-      })
+        if (trimmed.length < 8) return false
+        if (!thinkLines.has(trimmed)) return false
+        return trimmed.length >= 20 || echoWhole
+      }
+      if (!candidates.some(leaked)) return body
+
+      const kept = bodyLines.filter((line) => !leaked(line))
       const stripped = kept.join('\n').replace(/\n{3,}/gu, '\n\n').trim()
       // 全被剥光说明判错了 —— 宁可原样给出，也不要交一张空白卡片。
       return stripped.length === 0 ? body : stripped

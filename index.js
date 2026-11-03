@@ -658,6 +658,34 @@ const ERROR_TEXT = /(?:报错|错误|异常|堆栈|traceback|error|exception|失
  */
 const WS_VERB = /(?:看|查看|检查|读|打开|跑|运行|执行|安装|卸载|修改|修复|修掉|修好|改成|改掉|改一下|重构|整理|调试|排查|定位|提交|推送|回滚|升级|迁移|同步|扫描|统计|列出|导出|导入|解析|转换|替换|批量|搜索|找出|对比|评审|解释|换个|删掉|删除|新建|创建|生成|加上|添加|补上|补全|写个|改)/u
 
+/**
+ * 中文里「动作在句中或句尾」的说法。
+ *
+ * 前面的 WS_VERB 是按常见动词表匹配的，漏了这几种语序：
+ *   「加一个超时」        —— 动词 + 数量 + 名词
+ *   「压到 500 字以内」    —— 动词 + 到 + 数字
+ *   「把 for 循环换成 while」—— 把字句 + 换成
+ *   「用 TypeScript 重写」 —— 用 X + 重写
+ * 它们都是要动手的事，不是闲聊。
+ */
+const ZH_ACTION_TAIL = /(?:加|减|删|去|换|改|调|压|扩|缩|拆|合|移|拆成|拆开|合并|换成|替换成|重写|重构|优化|简化|拆分|压缩|限制|约束|统一|对齐|统一成|包一层|套一层|抽出来|提出来|抽成|提成)/u
+
+/**
+ * 否定式与约束式要求。
+ *
+ * 「别用 any」「不要用 Object」「最多 500 字」「必须 TypeScript」——
+ * 这些是明确的指令，判成闲聊等于让用户白点一次。
+ */
+const ZH_CONSTRAINT = /(?:别|不要|不准|不许|禁止|避免|尽量别|务必|必须|一定要|只能|最多|最少|不超过|不低于|不少于|控制在|限制在|保持在|统一用|统一成|一律|全都|全用)/u
+
+/**
+ * 技术栈 / 具体实现指定。
+ *
+ * 「用 TypeScript 重写」「用 Map 而不是 Object」——
+ * 出现这些具体名词 + 任何动作意味，就是在说代码怎么写。
+ */
+const TECH_NOUN = /(?:TypeScript|JavaScript|Python|Rust|Go\b|Java|React|Vue|Svelte|Node|Deno|Bun|Map|Set|Object|Array|Promise|async|await|interface|type\b|class\b|function\b|enum|struct|trait|for\s*循环|while\s*循环|if\s*语句|switch|正则|regex|json|yaml|toml|sql|http|api\b|rest|graphql|docker|k8s|nginx)/iu
+
 /** 英文的动作动词，只在开头位置认。 */
 const EN_WS_VERB = /^\s*(?:please\s+)?(?:read|open|run|exec|execute|edit|write|create|build|make|fix|refactor|test|debug|install|uninstall|add|remove|delete|update|upgrade|migrate|check|review|compare|search|find|grep|patch|commit|push|revert|bump|rename|move|copy|sync|scan|list|dump|export|import|parse|convert|replace|split|merge|analyze|analyse|explain|show|print|tell me|give me|look at|look into)/iu
 
@@ -727,6 +755,23 @@ function classifyInput(raw) {
 
   // 6. 不是疑问句、又有动作动词。
   if (WS_VERB.test(s) || EN_WS_VERB.test(s)) return 'c'
+
+  /*
+   * 7. 其余几种「要动手」的说法。
+   *
+   * 走到这里说明既不是疑问句、也没有常见动词。但这几种仍然是任务：
+   *   「加一个超时」           动词在句尾
+   *   「别用 any」             否定式要求
+   *   「压到 500 字以内」      约束式要求
+   *   「用 TypeScript 重写」   指定技术栈
+   * 判成 a) 会一个字都不改，用户点了优化什么都没发生。
+   *
+   * 这几条放在疑问判断**之后**：带疑问词的仍然先按提问处理，
+   * 否则「能不能别用 any？」会被当成任务去改写。
+   */
+  if (ZH_ACTION_TAIL.test(s)) return 'c'
+  if (ZH_CONSTRAINT.test(s)) return 'c'
+  if (TECH_NOUN.test(s)) return 'c'
 
   // 7. 寒暄 / 陈述。
   return 'a'
