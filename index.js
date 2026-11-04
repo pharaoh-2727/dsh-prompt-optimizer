@@ -891,12 +891,18 @@ function floorFor(styleId, sourceLength, limit) {
  *
  * 返回 null 表示合格；否则返回一句给模型看的修正指令。
  *
- * 两种不合格：
- *   'too-long'  —— 超出档位上限（详细档冗余、精简档被加码都归到这里）；
- *   'too-short' —— 任务类输入却几乎没补内容（均衡档只改措辞就落在这里）。
+ * 三种不合格：
+ *   'too-long'   —— 超出档位上限（详细档冗余、精简档被加码都归到这里）；
+ *   'too-short'  —— 任务类输入却几乎没补内容（均衡档只改措辞就落在这里）；
+ *   'unchanged'  —— 任务类输入，模型把原文原样吐了回来，一个字都没改。
  *
- * 'too-short' 只对「均衡」「详细」判定：任务类输入按定义就该补出产出与验收，
- * 结果却跟原文差不多长，说明模型偷懒了。
+ * 'too-short' / 'unchanged' 只对「均衡」「详细」的任务类判定：任务类输入按定义
+ * 就该补出产出与验收，结果却跟原文一样或差不多长，说明模型没做事。
+ *
+ * 为什么要把 'unchanged' 单列：线上实测「帮我优化一下这个」跑 8 次有 2 次
+ * 原样返回。只判 'too-short' 的话，重试指令说的是「几乎没有补充任何内容」，
+ * 模型看到这句会以为「补点字就行」，于是补出来的还是原文换了个说法 ——
+ * 或者干脆还是原文。**得直接告诉它「你什么都没改」。**
  */
 function bandViolation(styleId, source, result) {
   if (styleId !== 'brief' && styleId !== 'balanced' && styleId !== 'detailed') {
@@ -912,12 +918,37 @@ function bandViolation(styleId, source, result) {
   }
 
   if (styleId !== 'brief' && classifyInput(s) === 'c') {
+    /*
+     * 先判「原样返回」，再判「太短」。
+     *
+     * 顺序不能反：原样返回必然也满足「太短」（原文长度肯定低于下限），
+     * 先判太短就永远走不到这条分支，模型收到的还是那句含糊的「没补充内容」。
+     *
+     * 判据用归一化后的全等，而不是严格 === ：模型常会改个标点、
+     * 多一个句号、把全角换成半角，那仍然是「什么都没改」。
+     */
+    if (sameContent(s, r)) {
+      return 'unchanged'
+    }
     const floor = floorFor(styleId, s.length, limit)
     if (floor > 0 && r.length < floor) {
       return `too-short:${floor}`
     }
   }
   return null
+}
+
+/**
+ * 两段文字是不是「实质相同」。
+ *
+ * 忽略空白与标点差异 —— 模型把「好的，谢谢」写成「好的，谢谢。」，
+ * 或者把全角括号换成半角，那都不算改写。
+ */
+function sameContent(a, b) {
+  const strip = (s) => String(s ?? '')
+    .replace(/\s+/gu, '')
+    .replace(/[，。！？；：、,.!?;:'"'`（）()【】\[\]「」『』《》<>—\-…~～]/gu, '')
+  return strip(a) === strip(b)
 }
 
 /**
@@ -944,7 +975,21 @@ function correctionPromptFor(styleId, source, result, violation, sceneContext) {
   const limit = Number(bound)
 
   let instruction
-  if (kind === 'too-long') {
+  if (kind === 'unchanged') {
+    /*
+     * 「原样返回」得单独说，不能并进 too-short。
+     *
+     * too-short 的指令是「它几乎没有补充任何内容，本次输出至少 N 字」——
+     * 模型听到这句会去补字数，可能补出一堆和原文无关的空话。
+     * 这里要它做的是**改写**，不是**加长**。
+     */
+    instruction = [
+      '上一次改写不合格：你把原文原样返回了，一个字都没有改动。',
+      '用户点「优化」是希望拿到一份**改写过**的提示词，不是拿回自己刚写的话。',
+      '请重新改写：保留原意，把它写得更清楚、更可执行；原文没说的不要补造。',
+      '只输出改写后的正文。',
+    ].join('\n')
+  } else if (kind === 'too-long') {
     instruction = [
       '上一次改写不合格：它超出了本档的长度上限。',
       `本次输出总长不得超过 ${limit} 字（上次是 ${result.trim().length} 字，原文 ${source.trim().length} 字）。`,
@@ -1631,10 +1676,14 @@ export function apply(ctx) {
     // 预算不够就不复核了：见 OPTIMIZE_BUDGET_MS 的说明。
     if (violation !== null && activeStyle !== 'custom' && budgetEnough) {
       liveHooks?.onRevise?.({
-        reason: violation.startsWith('too-long') ? 'trimmed' : 'expanded',
+        reason: violation.startsWith('too-long')
+          ? 'trimmed'
+          : (violation === 'unchanged' ? 'unchanged' : 'expanded'),
         text: violation.startsWith('too-long')
           ? '超出这一档的长度上限，正在重新收敛…'
-          : '这一档要求补出产出与验收，正在补齐…',
+          : (violation === 'unchanged'
+            ? '模型原样返回了，正在重新改写…'
+            : '这一档要求补出产出与验收，正在补齐…'),
       })
       const corrected = await enhanceOnce(
         correctionPromptFor(activeStyle, text, optimized, violation, sceneContext),
@@ -1702,6 +1751,14 @@ export function apply(ctx) {
       at: Date.now(),
     }
 
+    /*
+     * 模型两次都原样返回时，如实标出来。
+     *
+     * 用户点「优化」等了几秒，拿回自己的原话 —— 界面必须说明白「这次没改成」，
+     * 而不是让他以为这就是优化结果。判据用 sameContent，只差标点也算没改。
+     */
+    const unchanged = classifyInput(text) === 'c' && sameContent(text, optimized)
+
     return {
       ok: true,
       text: optimized,
@@ -1711,6 +1768,7 @@ export function apply(ctx) {
       source,
       recovered,
       adjusted,
+      unchanged,
       // 思考过程与用量只来自第一次尝试：重试用的是另一段对话，混进来会更乱。
       reasoning: first.reasoning.length > 0 ? first.reasoning : null,
       usage: first.usage,

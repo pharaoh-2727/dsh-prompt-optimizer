@@ -1369,6 +1369,9 @@ window.__ModuleLoader__.load({
       if (meta.recovered === true) {
         badges.push({ text: '已拉回', kind: 'recover', title: '模型把一句话扩成了文档，已改回克制写法' })
       }
+      if (meta.unchanged === true) {
+        badges.push({ text: '未改动', kind: 'unchanged', title: '模型两次都原样返回了原文，这一版没有实质改动' })
+      }
       if (meta.freeUsed === true) {
         badges.push({ text: '免费通道', kind: 'free', title: '这一版由免费通道生成' })
       }
@@ -1760,6 +1763,7 @@ window.__ModuleLoader__.load({
               style: data.style,
               adjusted: null,
               recovered: false,
+              unchanged: false,
             },
           })
         },
@@ -1836,6 +1840,9 @@ window.__ModuleLoader__.load({
           // 只记 provider/model/style 的话，两版看起来只是措辞不同，会误导人。
           adjusted: result.adjusted ?? null,
           recovered: result.recovered === true,
+          // 模型把原文原样吐回来时引擎会标这个。历史记录要能认出来，
+          // 否则回头翻只会看到「这一版和上一版长得一样」，不知道为什么。
+          unchanged: result.unchanged === true,
           freeUsed: result.source === 'free',
         },
         elapsedMs: typeof result.elapsedMs === 'number' ? result.elapsedMs : null,
@@ -1855,6 +1862,7 @@ window.__ModuleLoader__.load({
           style: result.style,
           adjusted: result.adjusted,
           recovered: result.recovered,
+          unchanged: result.unchanged === true,
         },
       })
       return { ok: true }
@@ -3254,6 +3262,8 @@ window.__ModuleLoader__.load({
       if (meta.adjusted === 'trimmed') metaParts.push('已按档位上限收敛')
       else if (meta.adjusted === 'expanded') metaParts.push('已补齐到档位下限')
       if (meta.recovered) metaParts.push('从过度扩写中拉回')
+      // 用户等了几秒却拿回自己的原话 —— 必须说明白，别让他以为这就是结果。
+      if (meta.unchanged) metaParts.push('模型原样返回，这次没有改动')
       // 换稿期间说清楚在干什么：这是「结果突然变了」不再显得莫名其妙的关键。
       if (state.streaming === true) metaParts.push(state.revising || '生成中…')
 
