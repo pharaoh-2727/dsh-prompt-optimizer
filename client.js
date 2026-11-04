@@ -62,6 +62,20 @@ window.__ModuleLoader__.load({
   z-index:70;
   word-break:break-word;
 }
+.dsho-err-text{display:block}
+.dsho-err-options{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.dsho-err-option{
+  appearance:none;cursor:pointer;
+  padding:3px 8px;
+  border-radius:var(--dsw-radius-sm);
+  border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-interactive-bg-hover);
+  color:var(--dsw-alias-label-primary);
+  font-size:12px;line-height:17px;
+  font-family:inherit;
+}
+.dsho-err-option:hover{border-color:var(--dsw-alias-brand-primary)}
+.dsho-err-option:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
 /* 取消态：运行中的按钮点一下就中止这次优化，用错误色提示「这是个停止键」 */
 .dsho-btn[data-mode="cancel"] .dsho-icon{color:var(--dsw-alias-state-error-primary)}
 `
@@ -594,6 +608,52 @@ window.__ModuleLoader__.load({
   font:inherit;font-size:13px;line-height:21px;
 }
 .dsho-textarea:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+/* 偏好列表：每条一行，删除键靠右；条数不多，不做滚动区 */
+.dsho-pref-list{display:flex;flex-direction:column;gap:6px;margin:2px 0 8px}
+.dsho-pref-row{
+  display:flex;align-items:flex-start;gap:8px;
+  padding:7px 10px;
+  border-radius:var(--dsw-radius-sm);
+  background:var(--dsw-alias-bg-overlay);
+  border:1px solid var(--dsw-alias-border-l2);
+}
+.dsho-pref-text{
+  flex:1;min-width:0;
+  font-size:13px;line-height:19px;
+  color:var(--dsw-alias-label-primary);
+  word-break:break-word;
+}
+.dsho-pref-del{
+  appearance:none;cursor:pointer;flex:none;
+  width:20px;height:20px;padding:0;
+  border:none;border-radius:var(--dsw-radius-sm);
+  background:transparent;
+  color:var(--dsw-alias-label-secondary);
+  font-size:15px;line-height:20px;font-family:inherit;
+}
+.dsho-pref-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-error-primary)}
+.dsho-pref-add{display:flex;gap:8px;align-items:center}
+.dsho-pref-input{
+  flex:1;min-width:0;
+  padding:7px 10px;
+  border-radius:var(--dsw-radius-sm);
+  border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-bg-overlay);
+  color:var(--dsw-alias-label-primary);
+  font-size:13px;line-height:19px;font-family:inherit;
+}
+.dsho-pref-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.dsho-pref-btn{
+  appearance:none;cursor:pointer;flex:none;
+  padding:7px 14px;
+  border-radius:var(--dsw-radius-sm);
+  border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-interactive-bg-hover);
+  color:var(--dsw-alias-label-primary);
+  font-size:13px;line-height:19px;font-family:inherit;
+}
+.dsho-pref-btn:hover:not(:disabled){border-color:var(--dsw-alias-brand-primary)}
+.dsho-pref-btn:disabled{opacity:.5;cursor:default}
 .dsho-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dsho-status{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .dsho-status[data-kind="ok"]{color:var(--dsw-alias-state-success-primary)}
@@ -1219,7 +1279,14 @@ window.__ModuleLoader__.load({
             else if (event.event === 'error') {
               // code 是稳定契约（ABORTED / EMPTY_INPUT / TOO_LONG / EMPTY_OUTPUT / UNKNOWN）；
               // error 文案随时可能改，判断逻辑不能挂在它上面。
-              result = { ok: false, error: event.data.error, code: event.data.code }
+              // options 是「下一步能点什么」，由服务端算好 —— 客户端不重复这套判断，
+              // 否则两处规则一旦分叉，界面给的按钮就和服务端认为的原因对不上。
+              result = {
+                ok: false,
+                error: event.data.error,
+                code: event.data.code,
+                options: Array.isArray(event.data.options) ? event.data.options : [],
+              }
             }
             else if (event.event === 'aborted') {
               result = { ok: false, aborted: true, error: event.data.error || '已取消' }
@@ -1855,7 +1922,14 @@ window.__ModuleLoader__.load({
       }
       if (result.ok !== true || typeof result.text !== 'string' || result.text.length === 0) {
         previewStore.reset()
-        return { ok: false, error: result.error || '模型返回了空内容' }
+        return {
+          ok: false,
+          error: result.error || '模型返回了空内容',
+          code: result.code,
+          // 失败时把「下一步能点什么」一起交出去。没给就是没算出来，
+          // 界面据此退回只显示文案，而不是渲染一排空白按钮。
+          options: Array.isArray(result.options) ? result.options : [],
+        }
       }
 
       const current = typeof previewStore.getDraft === 'function' ? previewStore.getDraft() : ''
@@ -2328,6 +2402,8 @@ window.__ModuleLoader__.load({
       const sessionId = typeof props.sessionId === 'string' ? props.sessionId : undefined
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
+      /** 失败时的备选动作（由服务端算好），空数组就是只显示文案。 */
+      const [errorOptions, setErrorOptions] = useState([])
       const [preview, setPreview] = useState(previewStore.state)
       // busy 的同步锁：setBusy 是异步的，同一帧内的连点靠它挡住。
       const busyRef = useRef(false)
@@ -2367,10 +2443,21 @@ window.__ModuleLoader__.load({
         previewStore.set({ adopted: false, result: '', original: '', phase: 'idle' })
       }, [draft, preview.adopted, preview.result])
 
-      const showError = useCallback((message) => {
+      /*
+       * 出错时不只是显示一句话，还把「下一步能点什么」摆出来。
+       *
+       * 服务端算好了 options（去选模型 / 重试 / 换档 / 精简），客户端照着渲染。
+       * 有备选就不自动消失：给按钮加个 5 秒倒计时，用户还没看清就没了更糟。
+       */
+      const showError = useCallback((message, options) => {
         setError(String(message || '优化失败'))
+        const list = Array.isArray(options) ? options : []
+        setErrorOptions(list)
         if (timerRef.current !== undefined) clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => setError(null), 5000)
+        // 没备选时维持原样（5 秒自动消失）；有备选就一直留着等用户点。
+        if (list.length === 0) {
+          timerRef.current = setTimeout(() => setError(null), 5000)
+        }
       }, [])
 
       /*
@@ -2388,13 +2475,14 @@ window.__ModuleLoader__.load({
         previewStore.set({ phase: 'running' })
         setBusy(true)
         setError(null)
+        setErrorOptions([])
         try {
           const outcome = await runOptimize(raw, sessionId)
           if (outcome.stale === true) return
           if (outcome.aborted === true) return
-          if (outcome.ok !== true) showError(outcome.error)
+          if (outcome.ok !== true) showError(outcome.error, outcome.options)
         } catch (err) {
-          showError(err && err.message ? err.message : err)
+          showError(err && err.message ? err.message : err, [])
         } finally {
           // 只有自己还是当前这一次时才松手：更晚发起的那次可能还在跑。
           if (previewStore.state.phase !== 'running') {
@@ -2403,6 +2491,62 @@ window.__ModuleLoader__.load({
           }
         }
       }, [draft, sessionId, showError])
+
+      /*
+       * 点一个备选动作。
+       *
+       * 四种 kind 对应四条不同的路：
+       *   retry        —— 原样再跑一次
+       *   shorten      —— 不跑，把焦点交回输入框让用户自己删
+       *   switch-style —— 切到精简档再跑（档位越高上限越低）
+       *   pick-model / open-settings —— 不跑，跳到设置页
+       *
+       * 「不跑」的那几条同样重要：错误是「原文太长」时，再跑一次还是太长。
+       * 用户需要的是**改原文的入口**，不是一个更快的重试按钮。
+       */
+      const runErrorOption = useCallback(async (option) => {
+        const kind = option && typeof option.kind === 'string' ? option.kind : ''
+        setError(null)
+        setErrorOptions([])
+        if (kind === 'retry') {
+          void run()
+          return
+        }
+        if (kind === 'switch-style') {
+          try {
+            await postJson('/dsh-prompt-optimizer/settings', { style: 'brief' })
+          } catch {
+            /* 切换失败就照旧档跑，总比什么都不做强 */
+          }
+          void run()
+          return
+        }
+        if (kind === 'shorten') {
+          // 把光标交回输入框：用户要删字，得先能打字。
+          if (typeof document !== 'undefined') {
+            const box = document.querySelector('.dsh-input textarea, textarea')
+            if (box && typeof box.focus === 'function') box.focus()
+          }
+          return
+        }
+        if (kind === 'pick-model' || kind === 'open-settings') {
+          /*
+           * 打开设置面板，**不是**跳 URL。
+           *
+           * 早先这里写的是 window.location.assign('/settings') —— 实测那条路径
+           * 返回 404：DSH 的设置是应用内的一个面板，不是路由。点了会把整个
+           * 界面跳到一个错误页，比不点还糟。
+           *
+           * 正确做法是点开设置入口（和用户自己点一样），让宿主去切面板。
+           * 找不到入口就把路径写在错误行里 —— 用户至少知道去哪，而不是点了没反应。
+           */
+          if (!openSettingsPanel()) {
+            setError('设置 → 优化 → 「用哪个模型」，在那里选一个即可')
+            setErrorOptions([])
+          }
+          return
+        }
+      }, [run])
 
       const cancel = useCallback(async () => {
         const requestId = previewStore.state.requestId
@@ -2443,7 +2587,21 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsho-root' },
         h('style', null, BUTTON_CSS),
-        error === null ? null : h('div', { className: 'dsho-err', role: 'alert' }, error),
+        error === null
+          ? null
+          : h('div', { className: 'dsho-err', role: 'alert' },
+              h('div', { className: 'dsho-err-text' }, error),
+              errorOptions.length === 0
+                ? null
+                : h('div', { className: 'dsho-err-options' },
+                    errorOptions.map((option, index) => h('button', {
+                      key: 'o' + index,
+                      type: 'button',
+                      className: 'dsho-err-option',
+                      title: typeof option.hint === 'string' ? option.hint : option.label,
+                      onClick: () => { void runErrorOption(option) },
+                    }, option.label)))),
+
         h('button', {
           type: 'button',
           className: 'dsho-btn',
@@ -2477,6 +2635,8 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState(null)
       // 本地编辑态：改动即时保存，但 UI 要先反映出来。
       const [draft, setDraft] = useState(null)
+      /** 正在输入的那条偏好（还没加进去）。 */
+      const [prefDraft, setPrefDraft] = useState('')
 
       useEffect(() => {
         let alive = true
@@ -2558,6 +2718,25 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsho-status' }, '正在读取…')
         )
       }
+
+      /*
+       * 偏好：读写都走同一个设置接口。
+       *
+       * 用 draft.preferences（而不是 data.settings.preferences）：
+       * 用户刚加完一条、还没收到回包时，界面要立刻反映出来。
+       * persist 里已经做了 setDraft，所以这里只要把新数组交过去。
+       */
+      const preferences = Array.isArray(draft.preferences) ? draft.preferences : []
+      const savePreferences = useCallback(async (next) => {
+        await persist({ ...draft, preferences: next })
+      }, [draft, persist])
+      const addPreference = useCallback(async () => {
+        const value = prefDraft.trim()
+        if (value.length === 0) return
+        if (preferences.length >= 20) return
+        setPrefDraft('')
+        await persist({ ...draft, preferences: [...preferences, value] })
+      }, [prefDraft, preferences, draft, persist])
 
       const styles = data.styles ?? []
       const models = data.models ?? []
@@ -2747,6 +2926,54 @@ window.__ModuleLoader__.load({
                 }, currentStyle === undefined ? '' : currentStyle.prompt)
               )
         ),
+
+        // 个性化增量：用户攒的几条固定偏好
+        h('div', { className: 'dsho-sec' },
+          h('div', { className: 'dsho-sec-title' }, '我的偏好'),
+          h('div', { className: 'dsho-sec-hint' },
+            '发现自己每次都在改同一件事？写在这里，以后每次优化都会照做。'
+            + '和上面的「自定义」不同：这里只加几条规则，不换掉整份提示词，三档都生效。'),
+          preferences.length === 0
+            ? h('div', { className: 'dsho-sec-hint' }, '还没有偏好。下面加一条试试。')
+            : h('div', { className: 'dsho-pref-list' },
+                preferences.map((item, index) => h('div', {
+                  key: 'pref' + index,
+                  className: 'dsho-pref-row',
+                },
+                  h('span', { className: 'dsho-pref-text' }, item),
+                  h('button', {
+                    type: 'button',
+                    className: 'dsho-pref-del',
+                    title: '删掉这一条',
+                    'aria-label': '删掉这一条',
+                    onClick: () => { void savePreferences(preferences.filter((_, i) => i !== index)) },
+                  }, '×')))),
+          h('div', { className: 'dsho-pref-add' },
+            h('input', {
+              className: 'dsho-pref-input',
+              value: prefDraft,
+              placeholder: '例如：不要用 emoji；产出用编号列表',
+              maxLength: 200,
+              spellCheck: false,
+              onChange: (event) => setPrefDraft(event.target.value),
+              onKeyDown: (event) => {
+                // 回车直接加：这是个一句话输入，不该逼用户去点按钮。
+                if (event.key === 'Enter' && !event.isComposing) {
+                  event.preventDefault()
+                  void addPreference()
+                }
+              },
+            }),
+            h('button', {
+              type: 'button',
+              className: 'dsho-pref-btn',
+              disabled: prefDraft.trim().length === 0 || preferences.length >= 20,
+              title: preferences.length >= 20 ? '最多 20 条' : '加到偏好里',
+              onClick: () => { void addPreference() },
+            }, '添加')),
+          preferences.length >= 20
+            ? h('div', { className: 'dsho-sec-hint' }, '已经 20 条了，这是上限。')
+            : null),
 
         status === null
           ? null
@@ -3923,6 +4150,38 @@ button[data-${NAV_ATTR}="${NAV_VALUE}"]::before{
         }
       } catch {
         /* 定位失败不影响设置页本身 */
+      }
+    }
+
+    /**
+     * 打开设置面板，返回是否真的点到了。
+     *
+     * 不跳 URL：DSH 的设置是应用内面板，'/settings' 这条路径不存在（实测 404）。
+     * 做法是找到宿主的设置入口按钮点一下，剩下的交给宿主。
+     *
+     * 三种可能的入口，按顺序试：
+     *   1. 导航栏里的「设置」按钮（图标 + 文字）
+     *   2. 带 aria-label / title 含「设置」的按钮
+     *   3. 底部工具栏里的齿轮
+     * 找不到就返回 false，让调用方把路径写在文案里 —— 静默失败最糟。
+     */
+    function openSettingsPanel() {
+      try {
+        if (typeof document === 'undefined') return false
+        const buttons = Array.from(document.querySelectorAll('button'))
+        const matches = (button) => {
+          const label = button.querySelector(':scope > span')
+          if (label !== null && label.textContent.trim() === '设置') return true
+          const aria = button.getAttribute('aria-label') || ''
+          const title = button.getAttribute('title') || ''
+          return /设置|Settings/iu.test(aria) || /设置|Settings/iu.test(title)
+        }
+        const target = buttons.find(matches)
+        if (target === undefined) return false
+        target.click()
+        return true
+      } catch {
+        return false
       }
     }
 

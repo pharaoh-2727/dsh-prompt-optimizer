@@ -447,6 +447,15 @@ const DEFAULT_SETTINGS = {
   model: '',
   style: 'balanced',
   customPrompt: '',
+  /**
+   * 个性化增量：用户自己攒下来的几条固定偏好。
+   *
+   * 和 customPrompt 的区别：customPrompt 是**换掉**整份系统提示词（且只在
+   * 「自定义」档生效），用户得从头写一遍；这里的一条规则是**加在**当前档位
+   * 之上，三档都能用。用户发现自己每次都在改同一件事（「别用 emoji」
+   * 「产出用编号列表」），就攒一条进来，下次不用再说一遍。
+   */
+  preferences: [],
   /** 是否已经问过用户要不要用免费通道（首次安装时弹一次窗）。 */
   freeChannelAsked: false,
 }
@@ -562,6 +571,27 @@ function loadSettings() {
   }
 }
 
+/**
+ * 个性化增量：整理用户攒的偏好。
+ *
+ * 只做三件事：去掉非字符串、去掉首尾空白、丢掉空的与超长的。
+ * **不去重、不排序、不改写** —— 用户写什么就发什么，改一个字都是替他说话。
+ *
+ * 上限 20 条、每条 200 字：这两条是防手滑的闸，不是产品限制。
+ * 一份系统提示里塞进 20 条偏好已经够多了，再多模型也记不住。
+ */
+const PREFERENCE_MAX_COUNT = 20
+const PREFERENCE_MAX_CHARS = 200
+
+function normalizePreferences(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .filter((item) => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && item.length <= PREFERENCE_MAX_CHARS)
+    .slice(0, PREFERENCE_MAX_COUNT)
+}
+
 function normalizeSettings(input) {
   const raw = input !== null && typeof input === 'object' ? input : {}
   // 三选一：auto 跟随对话 / manual 固定模型 / free 优先免费通道。
@@ -579,6 +609,7 @@ function normalizeSettings(input) {
     model: typeof raw.model === 'string' ? raw.model : '',
     style,
     customPrompt: typeof raw.customPrompt === 'string' ? raw.customPrompt : '',
+    preferences: normalizePreferences(raw.preferences),
     freeChannelAsked: raw.freeChannelAsked === true,
   }
 }
@@ -628,9 +659,38 @@ function systemPromptFor(current, sceneContext, lengthHint) {
     const found = STYLE_ITEMS.find((item) => item.id === current.style)
     return renderPrompt(found ?? STYLE_ITEMS[1], sceneContext)
   })()
-  if (!lengthHint) return base
+  // 偏好排在公共规则**之前**：公共规则是产品契约（不许替用户回答），
+  // 优先级必须最高；偏好是用户的个人口味，只能在同一份契约下调整写法。
+  const withPrefs = appendPreferences(base, current.preferences)
+  if (!lengthHint) return withPrefs
   const hint = lengthHintFor(lengthHint.styleId, lengthHint.source, lengthHint.kind)
-  return hint === null ? base : base + '\n\n' + hint
+  return hint === null ? withPrefs : withPrefs + '\n\n' + hint
+}
+
+/**
+ * 把用户的偏好拼进系统提示。
+ *
+ * 位置：公共规则之前（见 systemPromptFor 的说明）。用「用户偏好」这个小标题
+ * 开头，让模型知道这几条是**这一次的约定**，不是原文的一部分 —— 否则模型
+ * 可能把它们当成要改写的内容，原样抄进输出里。
+ *
+ * 明确写「与上面的档位规则冲突时以档位规则为准」：用户可能写出「随便写多长」
+ * 这种和长度上限打架的偏好，引擎的档位复核仍然会拒收超长结果 ——
+ * 提示里先说清楚，模型就不会白跑一趟。
+ */
+function appendPreferences(base, preferences) {
+  const list = normalizePreferences(preferences)
+  if (list.length === 0) return base
+  const block = [
+    '用户偏好（在这个用户的每次优化里都适用）：',
+    ...list.map((item, index) => `${index + 1}. ${item}`),
+    '与上面的档位规则、公共规则冲突时，以那些规则为准；其余情况按这里的偏好写。',
+  ].join('\n')
+  // 插在公共规则之前：COMMON 的标题是固定的一句，用它定位。
+  const marker = '公共规则（三档都适用，优先级高于档位规则和场景约定）：'
+  const idx = base.indexOf(marker)
+  if (idx < 0) return base + '\n\n' + block
+  return base.slice(0, idx) + block + '\n\n' + base.slice(idx)
 }
 
 /**
@@ -1074,7 +1134,7 @@ function sameContent(a, b) {
  * 复用原档位的提示词，再把「上次哪里不对、这次要改成什么样」写清楚，
  * 让模型自己收放，而不是换一档重来 —— 换档会把用户选的那一档换掉。
  */
-function correctionPromptFor(styleId, source, result, violation, sceneContext) {
+function correctionPromptFor(styleId, source, result, violation, sceneContext, preferences) {
   const item = STYLE_ITEMS.find((entry) => entry.id === styleId)
   /*
    * 重试也要带目标字数。
@@ -1084,9 +1144,12 @@ function correctionPromptFor(styleId, source, result, violation, sceneContext) {
    * 补过头又触发一次「收敛」，来回拉锯。
    */
   const hint = lengthHintFor(styleId, source, classifyInput(source))
+  // 重试也要带用户偏好：重试产出的就是最终结果，偏好在那一次同样成立。
+  // 早先这里直接 renderPrompt(item) 绕过了 systemPromptFor，偏好会丢 ——
+  // 于是首稿守偏好、重试稿不守，用户看到「它突然又不按我说的写了」。
   const base = item === undefined
-    ? systemPromptFor({ style: styleId }, sceneContext)
-    : renderPrompt(item, sceneContext)
+    ? systemPromptFor({ style: styleId, preferences }, sceneContext)
+    : appendPreferences(renderPrompt(item, sceneContext), preferences)
   const baseWithHint = hint === null ? base : base + '\n\n' + hint
   const [kind, bound] = violation.split(':')
   const limit = Number(bound)
@@ -1297,6 +1360,67 @@ function httpStatusOf(code) {
   if (code === 'ABORTED') return 499
   return 500
 }
+/**
+ * 失败时给用户的备选动作。
+ *
+ * 错误文案说「请到设置里选模型」，但设置在哪、要不要重试、能不能换个档 ——
+ * 全靠用户自己琢磨。这里把「下一步能点什么」算出来，客户端照着渲染按钮。
+ *
+ * 核心约束：**只给真的能做的**。
+ *   没配模型时给「重试」是骗人 —— 重试还是同一个错，用户白等一轮。
+ *   超长时给「去选模型」是误导 —— 跟模型一点关系都没有。
+ *
+ * kind 是固定集合（客户端只认这几个，多一个就渲染不出来）：
+ *   retry        重试一次
+ *   pick-model   去「设置 → 优化」选模型
+ *   shorten      精简原文
+ *   switch-style 换一档提示词
+ *   open-settings 打开设置页
+ */
+const FALLBACK_KINDS = new Set(['retry', 'pick-model', 'shorten', 'switch-style', 'open-settings'])
+
+/**
+ * 按错误码与文案算出建议动作。
+ *
+ * @param {string} code     稳定错误码（EMPTY_INPUT / TOO_LONG / EMPTY_OUTPUT / ABORTED / UNKNOWN）
+ * @param {string} message  给用户看的文案（只用来区分「取不到模型」这类没单独错误码的情形）
+ * @returns {Array<{kind: string, label: string, hint?: string}>}
+ */
+function fallbackOptionsFor(code, message) {
+  const text = String(message ?? '')
+  if (code === 'TOO_LONG') {
+    const limit = /精简到\s*(\d+)/u.exec(text)
+    const bound = limit === null ? MAX_INPUT_CHARS : Number(limit[1])
+    return [
+      { kind: 'shorten', label: '精简原文', hint: `删到 ${bound} 字以内再试一次` },
+      { kind: 'switch-style', label: '换精简档', hint: '档位越高上限越低，精简档最宽松' },
+    ]
+  }
+  if (code === 'EMPTY_INPUT') {
+    return [
+      { kind: 'shorten', label: '写下要优化的内容', hint: '先在输入框里写一句再点优化' },
+    ]
+  }
+  if (code === 'EMPTY_OUTPUT') {
+    return [
+      { kind: 'retry', label: '再试一次', hint: '模型这次没给内容，多半是偶发' },
+      { kind: 'switch-style', label: '换一档试试', hint: '精简档更容易一次写出结果' },
+    ]
+  }
+  // 取不到模型：这是唯一一种「重试必然还是同一个错」的情形。
+  if (/取不到可用模型|选择模型|没有可用模型/u.test(text)) {
+    return [
+      { kind: 'pick-model', label: '去选模型', hint: '设置 → 优化 → 用哪个模型' },
+      { kind: 'open-settings', label: '打开设置', hint: '顺便看一下免费通道有没有配好' },
+    ]
+  }
+  // 其余（网络抖动、上游 5xx、未知异常）：重试有意义。
+  return [
+    { kind: 'retry', label: '再试一次', hint: '如果是临时故障，重试多半能成' },
+    { kind: 'switch-style', label: '换一档试试', hint: '换一档会换一份系统提示，有时能绕开' },
+  ]
+}
+
 function writeEvent(res, event, data) {
   try {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -1835,7 +1959,7 @@ export function apply(ctx) {
             : '这一档要求补出产出与验收，正在补齐…'),
       })
       const corrected = await enhanceOnce(
-        correctionPromptFor(activeStyle, text, optimized, violation, sceneContext),
+        correctionPromptFor(activeStyle, text, optimized, violation, sceneContext, current.preferences),
         text,
       )
       if (corrected.text.length > 0) {
@@ -2103,15 +2227,22 @@ export function apply(ctx) {
         const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
         if (text.length === 0) {
           res.writeHead(400, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, code: 'EMPTY_INPUT', error: '输入为空，没有可优化的内容' }))
+          res.end(JSON.stringify({
+            ok: false,
+            code: 'EMPTY_INPUT',
+            error: '输入为空，没有可优化的内容',
+            options: fallbackOptionsFor('EMPTY_INPUT', '输入为空，没有可优化的内容'),
+          }))
           return
         }
         if (text.length > MAX_INPUT_CHARS) {
           res.writeHead(400, JSON_HEADERS)
+          const tooLongMessage = `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`
           res.end(JSON.stringify({
             ok: false,
             code: 'TOO_LONG',
-            error: `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`,
+            error: tooLongMessage,
+            options: fallbackOptionsFor('TOO_LONG', tooLongMessage),
           }))
           return
         }
@@ -2153,24 +2284,30 @@ export function apply(ctx) {
           // 回执里必须带错误码：只有中文文案的话，调用方一改文案就判断不了了。
           const errorCode = errorCodeOf(error)
           const status = httpStatusOf(errorCode)
+          const message = status === 500
+            ? `优化失败：${String(error?.message ?? error)}`
+            : String(error?.message ?? error)
           res.writeHead(status, JSON_HEADERS)
           res.end(JSON.stringify({
             ok: false,
             code: errorCode,
-            error: status === 500
-              ? `优化失败：${String(error?.message ?? error)}`
-              : String(error?.message ?? error),
+            error: message,
+            // 失败时给「下一步能点什么」，而不是只丢一句错误。
+            options: fallbackOptionsFor(errorCode, message),
           }))
         } finally {
           // 任务结束就把 requestId 从表里摘掉，否则取消会找不到它。
           done()
         }
       } catch (error) {
+        const errorCode = errorCodeOf(error)
+        const message = `优化失败：${String(error?.message ?? error)}`
         res.writeHead(500, JSON_HEADERS)
         res.end(JSON.stringify({
           ok: false,
-          code: errorCodeOf(error),
-          error: `优化失败：${String(error?.message ?? error)}`,
+          code: errorCode,
+          error: message,
+          options: fallbackOptionsFor(errorCode, message),
         }))
       }
     },
@@ -2201,15 +2338,22 @@ export function apply(ctx) {
         const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
         if (text.length === 0) {
           res.writeHead(400, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, code: 'EMPTY_INPUT', error: '输入为空，没有可优化的内容' }))
+          res.end(JSON.stringify({
+            ok: false,
+            code: 'EMPTY_INPUT',
+            error: '输入为空，没有可优化的内容',
+            options: fallbackOptionsFor('EMPTY_INPUT', '输入为空，没有可优化的内容'),
+          }))
           return
         }
         if (text.length > MAX_INPUT_CHARS) {
           res.writeHead(400, JSON_HEADERS)
+          const streamTooLong = `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`
           res.end(JSON.stringify({
             ok: false,
             code: 'TOO_LONG',
-            error: `内容过长（${text.length} 字符），请精简到 ${MAX_INPUT_CHARS} 以内`,
+            error: streamTooLong,
+            options: fallbackOptionsFor('TOO_LONG', streamTooLong),
           }))
           return
         }
@@ -2260,9 +2404,12 @@ export function apply(ctx) {
           } else {
             // 错误码同样要带出去：流式入口是客户端的主路径，
             // 只靠中文文案判断失败原因不可维护。
+            const streamCode = errorCodeOf(error)
+            const streamMessage = `优化失败：${String(error?.message ?? error)}`
             writeEvent(res, 'error', {
-              code: errorCodeOf(error),
-              error: `优化失败：${String(error?.message ?? error)}`,
+              code: streamCode,
+              error: streamMessage,
+              options: fallbackOptionsFor(streamCode, streamMessage),
             })
           }
           res.end()
@@ -2483,6 +2630,8 @@ export function apply(ctx) {
 
 export {
   STYLE_ITEMS,
+  normalizePreferences,
+  fallbackOptionsFor,
   DEFAULT_SETTINGS,
   // 提示词工具链要用的：模板（带占位符）、公共规则、渲染器。
   // dev/dump-prompts.mjs 导出它们，dev/apply-prompts.mjs 写回它们。
