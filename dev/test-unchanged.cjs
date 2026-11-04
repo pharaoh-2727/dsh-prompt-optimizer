@@ -16,6 +16,10 @@
  *
  * 只对任务类（c）追究：a) 寒暄和 b) 提问原样返回是正常的，
  * 它们本来就不该被改动。
+ *
+ * 注：上面那个输入现在走「先问一句」（见 test-clarify.cjs），不调模型。
+ * 本文件改用「把日志功能补上」—— 有具体对象、会被送去改写，
+ * 但模型仍可能原样吐回来。判据本身与具体输入无关。
  */
 const { pathToFileURL } = require('node:url')
 const { mkdirSync, writeFileSync, rmSync, readFileSync } = require('node:fs')
@@ -90,7 +94,7 @@ async function main() {
   console.log('\n[1] 任务类输入原样返回 → 必须重试，且接受改写稿')
   {
     const mod = await loadPlugin('detailed')
-    const SRC = '帮我优化一下这个'
+    const SRC = '把日志功能补上'
     const FIXED = '目标：优化「这个」所指的对象。\n步骤：先确认要优化的是哪个文件或哪段文字，确认后再动手改。\n产出格式：给出优化后的版本，并说明改了哪几处。\n验收标准：改动的每一处都能对应到原文说过的要求。'
     const { ctx, handlers } = makeCtx([SRC, FIXED])  // 首稿原样，重试给出真正的改写
     mod.apply(ctx)
@@ -105,7 +109,7 @@ async function main() {
   console.log('\n[2] 重试指令要明确指出「你只是重复了原文」')
   {
     const mod = await loadPlugin('detailed')
-    const SRC = '帮我优化一下这个'
+    const SRC = '把日志功能补上'
     const { ctx, handlers } = makeCtx([SRC, '目标：优化「这个」。\n产出格式：改好的版本。\n验收标准：改动能对应原文要求。'])
     mod.apply(ctx)
     await runOptimize(handlers, { text: SRC, sessionId: 'u2' })
@@ -127,7 +131,7 @@ async function main() {
   console.log('\n[3] 重试还是原样 → 不许假装改过')
   {
     const mod = await loadPlugin('detailed')
-    const SRC = '帮我优化一下这个'
+    const SRC = '把日志功能补上'
     const { ctx, handlers } = makeCtx([SRC, SRC])  // 两次都原样
     mod.apply(ctx)
     const r = await runOptimize(handlers, { text: SRC, sessionId: 'u3' })
@@ -173,7 +177,7 @@ async function main() {
   console.log('\n[7] 重试后还是原样 → 回执要带一个明确标记，界面能据此提示')
   {
     const mod = await loadPlugin('detailed')
-    const SRC = '帮我优化一下这个'
+    const SRC = '把日志功能补上'
     const { ctx, handlers } = makeCtx([SRC, SRC])
     mod.apply(ctx)
     const r = await runOptimize(handlers, { text: SRC, sessionId: 'u7' })

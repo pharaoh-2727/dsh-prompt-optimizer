@@ -131,6 +131,27 @@ window.__ModuleLoader__.load({
 .dsho-dock-title{font-size:13px;font-weight:600;line-height:20px}
 .dsho-dock-meta{font-size:11px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .dsho-dock-frame{position:relative}
+/*
+ * 追问区：原文没说清对象时，把问题摆在正文下面。
+ * 视觉上比正文弱一档 —— 它是「待补充」，不是结果。
+ */
+.dsho-dock-clarify{
+  margin-top:8px;padding:9px 11px;
+  border-radius:var(--dsw-radius-sm);
+  background:var(--dsw-alias-bg-layer-1);
+  border:1px dashed var(--dsw-alias-border-l2);
+}
+.dsho-dock-clarify-title{font-size:12px;font-weight:600;line-height:18px;margin-bottom:6px}
+.dsho-dock-clarify-list{margin:0;padding-left:18px;font-size:12px;line-height:19px}
+.dsho-dock-clarify-item{margin-bottom:6px}
+.dsho-dock-clarify-item:last-child{margin-bottom:0}
+.dsho-dock-clarify-q{word-break:break-word}
+.dsho-dock-clarify-hint{
+  font-size:11px;line-height:17px;
+  color:var(--dsw-alias-label-secondary);
+  word-break:break-word;
+}
+.dsho-dock-clarify-actions{margin-top:8px;display:flex;gap:6px}
 .dsho-dock-body{
   font-size:12px;line-height:19px;
   white-space:pre-wrap;word-break:break-word;
@@ -1137,13 +1158,19 @@ window.__ModuleLoader__.load({
      *   - 当前环境拿不到可读流（没有 response.body.getReader）。
      * 退回后结果照样拿得到，只是没有实时反馈。
      */
-    async function streamOptimize(text, sessionId, requestId, hooks) {
+    async function streamOptimize(text, sessionId, requestId, hooks, options) {
       let response
       try {
         response = await fetch('/dsh-prompt-optimizer/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, sessionId, requestId }),
+          body: JSON.stringify({
+            text,
+            sessionId,
+            requestId,
+            // 「仍要优化」：用户不想回答追问，就跳过信息量检查直接改。
+            skipClarify: options?.skipClarify === true,
+          }),
         })
       } catch (error) {
         return { ok: false, error: error && error.message ? error.message : String(error) }
@@ -1371,6 +1398,9 @@ window.__ModuleLoader__.load({
       }
       if (meta.unchanged === true) {
         badges.push({ text: '未改动', kind: 'unchanged', title: '模型两次都原样返回了原文，这一版没有实质改动' })
+      }
+      if (meta.needsClarification === true) {
+        badges.push({ text: '待补充', kind: 'clarify', title: '原文没说清要改什么，引擎先问了几个问题' })
       }
       if (meta.freeUsed === true) {
         badges.push({ text: '免费通道', kind: 'free', title: '这一版由免费通道生成' })
@@ -1717,7 +1747,7 @@ window.__ModuleLoader__.load({
      * 走流式接口：正文边收边显示，用户点下按钮就能看见字在长。
      * 服务端不支持流式时会自动退回一次性接口（streamOptimize 内部处理）。
      */
-    async function runOptimize(text, sessionId) {
+    async function runOptimize(text, sessionId, options) {
       const source = typeof text === 'string' ? text.trim() : ''
       if (source.length === 0) return { ok: false, error: '先在输入框里写下要优化的内容' }
 
@@ -1764,6 +1794,8 @@ window.__ModuleLoader__.load({
               adjusted: null,
               recovered: false,
               unchanged: false,
+              needsClarification: false,
+              questions: [],
             },
           })
         },
@@ -1796,7 +1828,7 @@ window.__ModuleLoader__.load({
             : '正在重写这一版…'
           previewStore.set({ revising: reason })
         },
-      })
+      }, { skipClarify: options?.skipClarify === true })
 
       // 迟到的这批结果已经不属于当前这次了（用户又点了一次）：
       // 直接丢弃 —— 不写流水账、不改状态，让新请求自己跑完。
@@ -1843,6 +1875,10 @@ window.__ModuleLoader__.load({
           // 模型把原文原样吐回来时引擎会标这个。历史记录要能认出来，
           // 否则回头翻只会看到「这一版和上一版长得一样」，不知道为什么。
           unchanged: result.unchanged === true,
+          // 引擎判定「对象没说清」时不调模型，直接给一组追问。
+          // 历史里也记一下：回头翻能看出这一版是问出来的，不是改出来的。
+          needsClarification: result.needsClarification === true,
+          questions: Array.isArray(result.questions) ? result.questions : [],
           freeUsed: result.source === 'free',
         },
         elapsedMs: typeof result.elapsedMs === 'number' ? result.elapsedMs : null,
@@ -1863,6 +1899,8 @@ window.__ModuleLoader__.load({
           adjusted: result.adjusted,
           recovered: result.recovered,
           unchanged: result.unchanged === true,
+          needsClarification: result.needsClarification === true,
+          questions: Array.isArray(result.questions) ? result.questions : [],
         },
       })
       return { ok: true }
@@ -2002,6 +2040,18 @@ window.__ModuleLoader__.load({
       } catch {
         /* 剪贴板不可用（无权限/非安全上下文）就算了，不打扰用户 */
       }
+    }
+
+    /**
+     * 「仍要优化」：用户不想回答追问，坚持按原样改。
+     *
+     * 引擎在信息不足时会直接返回追问、不调模型。这个出口让用户能推翻它 ——
+     * 有时候用户心里清楚「这个」指什么，只是懒得打出来。
+     */
+    async function forceOptimize() {
+      const source = previewStore.state.source
+      if (typeof source !== 'string' || source.trim().length === 0) return
+      await runOptimize(source, previewStore.sessionId, { skipClarify: true })
     }
 
     /** 用当前草稿再优化一次（换个说法再来一版）。 */
@@ -3325,6 +3375,19 @@ window.__ModuleLoader__.load({
         && state.original.trim() !== shownText.trim()
       const comparingOriginal = state.comparingOriginal === true && canCompareOriginal
 
+      /*
+       * 这一版是不是「问出来的」。
+       *
+       * 引擎在原文没说清对象时不调模型，直接把问题塞回来。这里把它取出来：
+       * 有内容才渲染追问区，正常结果不受影响。
+       */
+      const clarifyQuestions = !viewing
+        && state.phase === 'ready'
+        && state.meta && state.meta.needsClarification === true
+        && Array.isArray(state.meta.questions)
+        ? state.meta.questions
+        : []
+
       // 两栏视图的统一描述：谁也不会同时成立（一个是看历史，一个是看当前结果）。
       const pair = comparing
         ? {
@@ -3403,7 +3466,14 @@ window.__ModuleLoader__.load({
           onKeyDown: onEdgeKeyDown('right'),
         }, h(EdgeRightIcon)),
         h('div', { className: 'dsho-dock-head' },
-          h('span', { className: 'dsho-dock-title' }, '优化结果'),
+          /*
+           * 标题跟着这一版的性质走。
+           *
+           * 「先问一句」时正文框里放的是原文，如果还写「优化结果」，
+           * 用户会以为那就是改完的东西 —— 而它一个字都没改。
+           */
+          h('span', { className: 'dsho-dock-title' },
+            clarifyQuestions.length > 0 ? '需要补充信息' : '优化结果'),
           metaParts.length === 0
             ? null
             : h('span', { className: 'dsho-dock-meta' }, metaParts.join(' · ')),
@@ -3596,7 +3666,47 @@ window.__ModuleLoader__.load({
               h('div', {
                 className: 'dsho-dock-body',
               }, shownText)),
-        h('div', { className: 'dsho-dock-actions' },
+        /*
+         * 追问区：引擎判定「对象没说清」时不调模型，把问题摆出来让用户点选。
+         *
+         * 显示条件只看当前这一版（viewing === null）：看历史时不该再问一次，
+         * 历史里那一版当时问过什么，用户已经看到了。
+         */
+        !viewing && clarifyQuestions.length > 0
+          ? h('div', { className: 'dsho-dock-clarify' },
+              h('div', { className: 'dsho-dock-clarify-title' }, '原文没说清要改什么，先补一句'),
+              h('ol', { className: 'dsho-dock-clarify-list' },
+                clarifyQuestions.map((q, index) => h('li', {
+                  key: 'q' + index,
+                  className: 'dsho-dock-clarify-item',
+                },
+                  h('div', { className: 'dsho-dock-clarify-q' }, typeof q === 'string' ? q : q.question),
+                  q && typeof q === 'object' && typeof q.hint === 'string'
+                    ? h('div', { className: 'dsho-dock-clarify-hint' }, q.hint)
+                    : null))))
+          : null,
+        /*
+         * 「先问一句」时只留两个动作：放弃、仍要优化。
+         *
+         * 「复制」「替换草稿」在这里是误导 —— 正文框里放的是原文，
+         * 复制它等于复制用户自己刚写的话，替换草稿等于把输入框换回它自己。
+         * 追问区里已经给了「仍要优化」这个真正的出口。
+         */
+        clarifyQuestions.length > 0
+          ? h('div', { className: 'dsho-dock-actions' },
+              h('button', {
+                type: 'button',
+                className: 'dsho-dock-btn',
+                onClick: () => { discardPreview() },
+              }, '放弃'),
+              h('button', {
+                type: 'button',
+                className: 'dsho-dock-btn',
+                'data-primary': 'true',
+                title: '不回答，按原文直接改一版',
+                onClick: () => { void forceOptimize() },
+              }, '仍要优化'))
+          : h('div', { className: 'dsho-dock-actions' },
           // 看历史时「复制」拿的是那一版，「替换草稿」换成了它 —— 按钮跟着眼睛走。
           h('button', {
             type: 'button',

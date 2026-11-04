@@ -716,7 +716,7 @@ const WS_VERB = /(?:看|查看|检查|读|打开|跑|运行|执行|安装|卸载
  *   「用 TypeScript 重写」 —— 用 X + 重写
  * 它们都是要动手的事，不是闲聊。
  */
-const ZH_ACTION_TAIL = /(?:加|减|删|去|换|改|调|压|扩|缩|拆|合|移|拆成|拆开|合并|换成|替换成|重写|重构|优化|简化|拆分|压缩|限制|约束|统一|对齐|统一成|包一层|套一层|抽出来|提出来|抽成|提成)/u
+const ZH_ACTION_TAIL = /(?:加|减|删|去|换|改|调|压|扩|缩|拆|合|移|拆成|拆开|合并|换成|替换成|重写|重构|优化|简化|拆分|压缩|限制|约束|统一|对齐|统一成|包一层|套一层|抽出来|提出来|抽成|提成|弄|搞|处理|收拾|润色|完善)/u
 
 /**
  * 否定式与约束式要求。
@@ -768,6 +768,114 @@ const CONTINUATION = /^\s*(?:继续|接着|接着做|接着来|往下|再来|再
 /** 是不是疑问句式。 */
 function looksLikeQuestion(s) {
   return ASK_LEAD.test(s) || ASK_TAIL.test(s) || ASK_ANY.test(s) || EN_ASK.test(s)
+}
+
+/**
+ * 指示代词：单独当对象时没有信息量。
+ *
+ * 「帮我优化一下这个」里的「这个」——它到底指什么，只有用户知道。
+ * 模型只能猜，猜出来的都是「目标：优化这个」这类同义反复。
+ */
+const POINTER_WORD = /^(?:这个|那个|这些|那些|这段|那段|这篇|那篇|这|那|它)$/u
+
+/**
+ * 「信息不足」判定的输入长度上限。
+ *
+ * 超过这个长度就不再判 —— 写得长本身就说明信息够。
+ * 同时这也是一道性能闸：PATHY 的正则在超长输入上会退化（见 needsClarification）。
+ */
+const CLARIFY_MAX_CHARS = 200
+
+/**
+ * 判断一段输入是不是「对象只有一个指示代词」—— 信息不足以改写。
+ *
+ * 判据不是「短」：短但有信息的（「别用 any」「加一个超时」）不该问。
+ * 判据是**把指示代词拿掉之后，还剩不剩具体对象**。
+ *
+ *   帮我优化一下这个        → 去掉「这个」只剩「帮我优化一下」，没有对象 → 要问
+ *   把那个改一下            → 同理 → 要问
+ *   把 README 的安装章节更新 → 有 README / 安装章节 → 不问
+ *   帮我写个登录页          → 有登录页 → 不问
+ *
+ * 只对任务类（c）判：提问和寒暄本来就不需要对象。
+ */
+function needsClarification(raw) {
+  const s = String(raw ?? '').trim()
+  if (s.length === 0) return false
+
+  /*
+   * 长输入直接放行，不看内容。
+   *
+   * 两层理由：
+   *   1. 语义 —— 写得长本身就说明信息够，「这个」不会再是唯一线索；
+   *   2. 性能 —— PATHY 里有 (?:[w.@-]+[\/])+[w.@-]+ 这种嵌套量词，
+   *      在「两万字、一个斜杠都没有」的输入上会退化成 O(n²)：
+   *      实测单次 419ms，一万次判定就是几十分钟，而它挂在每次优化的入口上。
+   *      这是个只服务于短输入的启发式，没有理由让它扫全文。
+   */
+  if (s.length > CLARIFY_MAX_CHARS) return false
+
+  if (classifyInput(s) !== 'c') return false
+
+  // 有路径、文件名、命令、报错原文 —— 对象已经写清楚了。
+  if (PATHY.test(s) || CODE_SPAN.test(s) || COMMANDY.test(s) || ERROR_TEXT.test(s)) return false
+  // 有技术名词或约束 —— 对象或边界已经写清楚了。
+  if (TECH_NOUN.test(s) || ZH_CONSTRAINT.test(s)) return false
+  // 有引号/书名号包起来的具体内容 —— 对象写出来了。
+  if (/[「」『』《》""'']/u.test(s)) return false
+
+  /*
+   * 把指示代词和虚词剥掉，看还剩什么。
+   *
+   * 剩下的如果只是「帮我 + 动词 + 一下」这种骨架，就说明没有对象。
+   * 骨架里允许出现的词列在 SHELL_WORDS 里；除此之外还剩 2 个字以上，
+   * 就算有具体对象（「登录页」「日志」「重试逻辑」都会留下痕迹）。
+   */
+  const stripped = s
+    .replace(/帮我|帮忙|请帮|麻烦|给我|替我|劳驾|求帮/gu, '')
+    .replace(/一下|一些|一点|吧|呢|啊|呀|嘛/gu, '')
+    .replace(/(?:这个|那个|这些|那些|这段|那段|这篇|那篇)/gu, '')
+    .replace(/[\s，。！？；：、,.!?;:'"'`（）()【】\[\]「」『』《》<>—\-…~～]/gu, '')
+    .trim()
+
+  // 剩下的东西里，去掉动词和常见虚词。
+  const skeleton = stripped
+    .replace(/(?:优化|改|修改|调整|整理|处理|弄|做|看|检查|写|补|加|删|换|跑|执行|生成|创建|重构|润色|完善|修|调)/gu, '')
+    .replace(/(?:得|的|地|了|把|给|在|对|和|与|或者|还是|更|再|也|都|就|要|想|能|可以|会|应该|需要|帮我)/gu, '')
+    .trim()
+
+  // 剥完还剩 ≥2 个字，说明原文里确实有具体对象。
+  return skeleton.length < 2
+}
+
+/**
+ * 追问清单。
+ *
+ * 不是「请补充更多信息」这种空话 —— 用户不知道该补什么。
+ * 每一问都要能直接回答，答完就能改写。
+ */
+function clarificationQuestionsFor(raw) {
+  const s = String(raw ?? '').trim()
+  const quoted = /[「」『』《》""'']/u.test(s)
+  return [
+    {
+      id: 'object',
+      question: quoted
+        ? '要改的是引号里那段内容吗？如果是别的，请说明是哪个文件或哪段文字。'
+        : '「这个」指的是哪个文件、哪段文字，还是哪条消息？',
+      hint: '给出 @ 路径、粘贴原文，或说明在第几轮对话里',
+    },
+    {
+      id: 'direction',
+      question: '希望往哪个方向改？',
+      hint: '更清楚 / 更短 / 补上产出与验收 / 换成正式语气',
+    },
+    {
+      id: 'deliverable',
+      question: '改完之后你希望拿到什么？',
+      hint: '一段可直接发的提示词 / 改好的文件 / 一份清单',
+    },
+  ]
 }
 
 /**
@@ -1400,6 +1508,38 @@ export function apply(ctx) {
       }
     }
 
+    /*
+     * 对象只有一个指示代词的输入：不调模型，直接问清楚。
+     *
+     * 「帮我优化一下这个」—— 「这个」指什么只有用户知道。模型只能猜，
+     * 猜出来的都是「目标：优化这个」这类同义反复。线上实测跑 8 次，
+     * 0~2 次原样返回，其余产出同义反复。
+     *
+     * 在模型侧做的补救（重试、目标字数、unchanged 标记）都治不了它：
+     * **输入本来就缺信息，模型再努力也补不出来。** 产品上承认「这条不够」，
+     * 比假装能改要好 —— 用户补一句，比等几秒拿到废话强。
+     *
+     * options.skipClarify 可以让调用方强制走改写（测试与高级用法需要）。
+     */
+    if (options?.skipClarify !== true && needsClarification(text)) {
+      return {
+        ok: true,
+        text,
+        provider: 'none',
+        model: 'none',
+        style: settings.style,
+        source: 'clarify',
+        recovered: false,
+        adjusted: null,
+        reasoning: null,
+        usage: null,
+        elapsedMs: 0,
+        needsClarification: true,
+        questions: clarificationQuestionsFor(text),
+        freeChannel: { enabled: false, used: false, error: null },
+      }
+    }
+
     const sessionId = typeof options?.sessionId === 'string' ? options.sessionId : ''
     const startedAt = Date.now()
     // 设置快照：一次优化跑到一半时用户去设置页换档，不该中途换提示词。
@@ -1783,6 +1923,27 @@ export function apply(ctx) {
 
   /** 把优化回执拼成一段给人看的文字（斜杠命令用）。 */
   function describeResult(result) {
+    /*
+     * 「先问一句」：正文是原文，下面列出要补的信息。
+     *
+     * 不能只把原文丢出来 —— 用户会以为改写失败了，或者以为这就是结果。
+     */
+    if (result.needsClarification === true) {
+      const questions = Array.isArray(result.questions) ? result.questions : []
+      const lines = [
+        '原文没说清要改什么，先补充这几项（补充后重新执行即可）：',
+        '',
+        ...questions.map((q, i) => {
+          const question = typeof q === 'string' ? q : String(q?.question ?? '')
+          const hint = q && typeof q === 'object' && typeof q.hint === 'string' ? q.hint : ''
+          return `${i + 1}. ${question}${hint ? `\n   —— ${hint}` : ''}`
+        }),
+        '',
+        '---',
+        `原文：${result.text}`,
+      ]
+      return lines.join('\n')
+    }
     const lines = [
       result.text,
       '',
@@ -1965,7 +2126,12 @@ export function apply(ctx) {
         try {
           // 路由只负责 HTTP 语义（状态码、取消、requestId 回收），
           // 改写本身全在 optimizeText() 里 —— 斜杠命令、工具、服务共用同一份。
-          const result = await optimizeText({ text, sessionId, signal: controller.signal })
+          const result = await optimizeText({
+            text,
+            sessionId,
+            signal: controller.signal,
+            skipClarify: parsed.skipClarify === true,
+          })
           res.writeHead(200, JSON_HEADERS)
           res.end(JSON.stringify(result))
         } catch (error) {
@@ -2067,6 +2233,7 @@ export function apply(ctx) {
             text,
             sessionId,
             signal: controller.signal,
+            skipClarify: parsed.skipClarify === true,
             hooks: {
               onStart: (info) => writeEvent(res, 'start', info),
               onText: (value) => writeEvent(res, 'delta', { text: value }),
@@ -2244,6 +2411,24 @@ export function apply(ctx) {
           agent: exec?.agent,
           signal: exec?.signal,
         })
+        /*
+         * 「先问一句」：正文是原文，必须把问题一并交给模型，
+         * 否则它会把原文当成改写结果转述给用户，看起来像是改失败了。
+         */
+        if (result.needsClarification === true) {
+          const questions = Array.isArray(result.questions) ? result.questions : []
+          return {
+            text: [
+              '原文没说清要改什么，请先补充：',
+              ...questions.map((q, i) => `${i + 1}. ${typeof q === 'string' ? q : String(q?.question ?? '')}`),
+              '',
+              `原文：${result.text}`,
+            ].join('\n'),
+            style: result.style,
+            provider: result.provider,
+            model: result.model,
+          }
+        }
         return {
           text: result.text,
           style: result.style,
@@ -2301,4 +2486,6 @@ export {
   // 输入分类（a 寒暄 / b 提问 / c 任务）。导出是给 dev/test-input-kind.cjs 用的：
   // 判据的回归测试要能直接钉住分类结果，而不是隔着「重试了几次」去猜。
   classifyInput,
+  // 信息量不足的判定。导出给 dev/test-clarify.cjs 直接钉判据。
+  needsClarification,
 }
