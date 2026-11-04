@@ -20,6 +20,9 @@ npm test          # 14 套离线测试，约 11 秒
 | `test-bands.cjs` | 三档长度公式与源码常量一致、三档上限严格递增、每档 prompt 写明了上限 |
 | `test-band-correction.cjs` | 超长 → 带修正指令重试（`adjusted='trimmed'`）；过短 → 补写重试（`'expanded'`）；一次到位不重试 |
 | `test-band-overshoot.cjs` | 重试稿「从超长变成过短」不许被记成收敛成功；同一方向上变短仍接受；落在区间内的照常接受 |
+| `test-send-brute.cjs` | 「发出去」的极限压测：9 种畸形 state 一律不发、6 种宿主能力缺失安静退出、10 种内容原样送达、连点两次只发一次、宿主异常不吞掉 |
+| `test-send-behavior.cjs` | 「发出去」的真实调用序列：先 setDraft 再 submit 最后关卡片；生成中/空结果/宿主没有 submit 时都不发 |
+| `test-send.cjs` | 「发出去」的静态检查：按钮存在、顺序正确、边界有守卫、追问状态下不出现 |
 | `test-clarify-brute.cjs` | 「先问一句」的极限压测：40 条有对象的真实句子一条都不许误伤、15 种含糊写法都要认出、非字符串/控制字符/超长输入不抛异常、一万次判定要在 1 秒内、要问的必须同时是任务类 |
 | `test-clarify-ui.cjs` | 界面要认 `needsClarification` 标记：卡片上有追问区、逐条列出问题、给「仍要优化」的出口、正常结果不显示追问区 |
 | `test-clarify.cjs` | 对象只有指示代词（「帮我优化一下这个」）时不调模型、直接给追问；有具体对象/提问/寒暄不问；极端输入不抛异常；`skipClarify` 能强制改写 |

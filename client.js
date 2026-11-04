@@ -1557,6 +1557,9 @@ window.__ModuleLoader__.load({
       listeners: new Set(),
       getDraft: null,      // 由按钮注入：读当前草稿
       setDraft: null,      // 由按钮注入：写草稿
+      // 整组输入动作（setDraft + submit）。「发出去」要连着调两个，
+      // 分开注入的话无法保证顺序。
+      inputActions: null,
       sessionId: undefined,
       subscribe(listener) {
         this.listeners.add(listener)
@@ -2054,6 +2057,40 @@ window.__ModuleLoader__.load({
       await runOptimize(source, previewStore.sessionId, { skipClarify: true })
     }
 
+    /**
+     * 「发出去」：把结果直接送进对话，不用先替换草稿再按回车。
+     *
+     * 用户点优化的目的通常是「把这句话发给模型」。现在的流程要走两步：
+     * 点「替换草稿」→ 再按回车。中间那一步纯属多余。
+     *
+     * 顺序不能反：先 setDraft 再 submit。反了发出去的是用户原来那句 ——
+     * 而且不会报错，用户只会觉得「我点了发出去，发出去的还是原文」。
+     */
+    async function sendToChat() {
+      const state = previewStore.state
+      if (state.phase !== 'ready') return false
+      const target = typeof state.result === 'string' ? state.result.trim() : ''
+      if (target.length === 0) return false
+      const actions = previewStore.inputActions
+      if (!actions || typeof actions.setDraft !== 'function' || typeof actions.submit !== 'function') {
+        return false
+      }
+      actions.setDraft(target)
+      /*
+       * 让宿主先把草稿写进去，再提交。
+       *
+       * setDraft 走的是编辑器的 restoreDraft/setDraft，submit 读的是
+       * shell.snapshot.draft —— 而 snapshot 在 publish() 里更新。
+       * 同一帧里连着调，submit 有可能读到旧草稿。等一个宏任务让状态落定，
+       * 这一步很便宜，但少了它就会偶发「发出去的是原文」。
+       */
+      await new Promise((resolve) => { setTimeout(resolve, 0) })
+      actions.submit()
+      // 结果已经用掉了：卡片关掉，不然它还挡在输入框上方显示一份已经发出去的内容。
+      discardPreview()
+      return true
+    }
+
     /** 用当前草稿再优化一次（换个说法再来一版）。 */
     async function reoptimizePreview() {
       const current = typeof previewStore.getDraft === 'function' ? previewStore.getDraft() : ''
@@ -2222,6 +2259,8 @@ window.__ModuleLoader__.load({
             props.inputActions.setDraft(value)
           }
         }
+        // 「发出去」要用整组 actions：先 setDraft 再 submit。
+        previewStore.inputActions = props.inputActions || null
         previewStore.sessionId = sessionId
       }, [draft, sessionId, props.inputActions])
 
@@ -2307,6 +2346,8 @@ window.__ModuleLoader__.load({
             props.inputActions.setDraft(text)
           }
         }
+        // 「发出去」要用整组 actions：先 setDraft 再 submit。
+        previewStore.inputActions = props.inputActions || null
         previewStore.sessionId = sessionId
       }, [draft, sessionId, props.inputActions])
 
@@ -3766,7 +3807,24 @@ window.__ModuleLoader__.load({
                     ? '还在生成中，等生成完再采用'
                     : '用这份结果替换输入框里的内容',
                 onClick: () => { adoptPreview() },
-              }, '替换草稿')
+              }, '替换草稿'),
+          /*
+           * 「发出去」：写草稿 + 立即提交，一步到位。
+           *
+           * 放在「替换草稿」右边、不做主按钮 —— 想先看看再改的人还占多数，
+           * 把「直接发」做成主按钮会误触。但它得在，用户点优化通常就是为了发。
+           */
+          viewing
+            ? null
+            : h('button', {
+                type: 'button',
+                className: 'dsho-dock-btn',
+                disabled: state.phase !== 'ready',
+                title: state.phase !== 'ready'
+                  ? '还在生成中，等生成完再发'
+                  : '把这一版直接发进对话，不用先替换草稿',
+                onClick: () => { void sendToChat() },
+              }, '发出去')
         )
       )
     }
