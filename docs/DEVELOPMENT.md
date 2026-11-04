@@ -30,6 +30,7 @@ npm test          # 14 套离线测试，约 11 秒
 | `test-fallback-options.cjs` | 失败时给备选：每种错误码都给 options、没模型不给「重试」、超长不给「去选模型」、成功结果不带 options、流式那条路也带 |
 | `test-fallback-ui.cjs` | 备选要在界面上看得见：渲染成按钮、有备选时不自动消失、五种 kind 各有处理、点完清空、空数组不渲染空容器 |
 | `test-fallback-brute.cjs` | 备选的极限压测：十几种畸形错误码与文案不崩、文案里 20 位数字不被当上限、同一个错误反复算结果一致、一万次 2ms、建议不超过 3 条 |
+| `test-prefs-fallback-cover.cjs` | 两个只在别处被间接用到的函数：`appendPreferences` 必须插在公共规则之前且锚点缺失时不丢偏好；`openSettingsPanel` 不许跳 URL（会 404）、找不到入口要返回 false 并给文案 |
 | `test-clarify-ui.cjs` | 界面要认 `needsClarification` 标记：卡片上有追问区、逐条列出问题、给「仍要优化」的出口、正常结果不显示追问区 |
 | `test-clarify.cjs` | 对象只有指示代词（「帮我优化一下这个」）时不调模型、直接给追问；有具体对象/提问/寒暄不问；极端输入不抛异常；`skipClarify` 能强制改写 |
 | `test-unchanged-ui.cjs` | 界面要认 `unchanged` 标记：结果框元信息提示「模型原样返回」，历史徽标显示「未改动」，正常结果不显示 |

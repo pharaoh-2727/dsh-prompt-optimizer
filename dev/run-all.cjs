@@ -39,6 +39,7 @@ const ORDER = [
   'test-fallback-options.cjs',
   'test-fallback-ui.cjs',
   'test-fallback-brute.cjs',
+  'test-prefs-fallback-cover.cjs',
   'test-send.cjs',
   'test-send-behavior.cjs',
   'test-send-brute.cjs',
