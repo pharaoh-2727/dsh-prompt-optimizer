@@ -609,16 +609,50 @@ function modelFromPatch() {
   }
 }
 
-/** 按当前设置决定用哪份系统提示词。 */
-function systemPromptFor(current, sceneContext) {
-  if (current.style === 'custom') {
-    const custom = current.customPrompt.trim()
-    if (custom.length > 0) return custom
-    // 自定义为空时退回均衡档，避免把空字符串当系统提示发出去。
-    return renderPrompt(STYLE_ITEMS.find((item) => item.id === 'balanced'), sceneContext)
-  }
-  const found = STYLE_ITEMS.find((item) => item.id === current.style)
-  return renderPrompt(found ?? STYLE_ITEMS[1], sceneContext)
+/**
+ * 按当前设置决定用哪份系统提示词。
+ *
+ * @param current    设置快照
+ * @param sceneContext 场景上下文
+ * @param lengthHint 可选：{ source, styleId }。给了就在提示词末尾追加一句
+ *                   「本次目标 N 字」，让模型第一次就落在档位区间内。
+ */
+function systemPromptFor(current, sceneContext, lengthHint) {
+  const base = (() => {
+    if (current.style === 'custom') {
+      const custom = current.customPrompt.trim()
+      if (custom.length > 0) return custom
+      // 自定义为空时退回均衡档，避免把空字符串当系统提示发出去。
+      return renderPrompt(STYLE_ITEMS.find((item) => item.id === 'balanced'), sceneContext)
+    }
+    const found = STYLE_ITEMS.find((item) => item.id === current.style)
+    return renderPrompt(found ?? STYLE_ITEMS[1], sceneContext)
+  })()
+  if (!lengthHint) return base
+  const hint = lengthHintFor(lengthHint.styleId, lengthHint.source, lengthHint.kind)
+  return hint === null ? base : base + '\n\n' + hint
+}
+
+/**
+ * 目标字数提示。
+ *
+ * 线上实测：18 字的任务在均衡档区间 [49, 98]，模型三次分别写了太短、太长、
+ * 太短 —— 它不知道「该写多少字」，只能凭感觉猜。猜偏了引擎就重试一次，
+ * 一次优化变成两次模型调用，用户多等一倍时间（实测 15 次里 11 次重试）。
+ *
+ * 直接把目标告诉它：取区间中点。模型不用猜，第一次就落在区间内。
+ *
+ * 只对任务类（c）给。提问（b）本来就不该被补长，给它设字数目标会逼它编造。
+ */
+function lengthHintFor(styleId, source, kind) {
+  if (kind !== 'c') return null
+  const limit = lengthLimitFor(styleId, source.length)
+  // 复用 bandViolation 用的同一份下限公式，别在这里再抄一遍 ——
+  // 抄两遍就会出现「提示里说的范围」和「复核时判的范围」对不上。
+  const floor = floorFor(styleId, source.length, limit)
+  const target = Math.round((floor + limit) / 2)
+  return `本次目标：原文 ${source.length} 字，改写到大约 ${target} 字（可接受范围 ${floor}–${limit} 字）。
+在这个范围里写得越短越好，够用即可；不要为了凑字数添加原文没有的内容。`
 }
 
 /**
@@ -894,9 +928,18 @@ function bandViolation(styleId, source, result) {
  */
 function correctionPromptFor(styleId, source, result, violation, sceneContext) {
   const item = STYLE_ITEMS.find((entry) => entry.id === styleId)
+  /*
+   * 重试也要带目标字数。
+   *
+   * 早先这里直接 renderPrompt(item)，绕过了 systemPromptFor 的提示拼接，
+   * 于是首稿有目标、重试没有 —— 模型在「补齐」时还是不知道补到多少才算够，
+   * 补过头又触发一次「收敛」，来回拉锯。
+   */
+  const hint = lengthHintFor(styleId, source, classifyInput(source))
   const base = item === undefined
     ? systemPromptFor({ style: styleId }, sceneContext)
     : renderPrompt(item, sceneContext)
+  const baseWithHint = hint === null ? base : base + '\n\n' + hint
   const [kind, bound] = violation.split(':')
   const limit = Number(bound)
 
@@ -921,7 +964,7 @@ function correctionPromptFor(styleId, source, result, violation, sceneContext) {
 
   // 分隔不用 '---'：公共规则第 1 条明令输出里不出现三个横线，
   // 系统提示自己先照做，免得模型照着学。
-  return [base, '', '下面是本次修正要求（优先于上面与本档冲突的表述）：', instruction].join('\n')
+  return [baseWithHint, '', '下面是本次修正要求（优先于上面与本档冲突的表述）：', instruction].join('\n')
 }
 
 async function readBody(req) {
@@ -1518,7 +1561,21 @@ export function apply(ctx) {
       }
     }
 
-    const first = await enhanceOnce(systemPromptFor(current, sceneContext), text, liveHooks)
+    /*
+     * 把「这次该写多长」直接告诉模型。
+     *
+     * 不告诉的话它只能猜：线上实测同一个输入三次，分别写出太短、太长、太短，
+     * 每次都触发一轮重试，一次优化变成两次模型调用。见 lengthHintFor 的说明。
+     */
+    const first = await enhanceOnce(
+      systemPromptFor(current, sceneContext, {
+        source: text,
+        styleId: current.style,
+        kind: classifyInput(text),
+      }),
+      text,
+      liveHooks,
+    )
     let optimized = first.text
     let usedFree = first.usedFree
     if (optimized.length === 0) {

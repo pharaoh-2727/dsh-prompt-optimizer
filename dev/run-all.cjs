@@ -27,6 +27,7 @@ const ORDER = [
   'test-band-overshoot.cjs',
   'test-input-kind.cjs',
   'test-audit-fixes.cjs',
+  'test-target-length.cjs',
   'test-free-channel.cjs',
   'test-restore-state.cjs',
   'test-preview-flow.cjs',
