@@ -87,6 +87,13 @@ async function main() {
     '帮我看看 http://localhost:3000 为什么 404',
     '把 <Button /> 的 onClick 换成箭头函数',
     '整理一下 CHANGELOG 里 0.1.3 那一段',
+    // 延续性输入：对象在上下文里，不在这儿。
+    '这个不对',
+    '这里错了',
+    '那个有问题',
+    '重来',
+    '接着做',
+    '按刚才的来',
   ]
   for (const t of REAL) {
     check('「' + t + '」不该问', needsClarify(t) === false, '判成了要问')

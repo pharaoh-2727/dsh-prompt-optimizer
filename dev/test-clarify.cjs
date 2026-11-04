@@ -118,7 +118,9 @@ async function main() {
   }
 
   console.log('\n[3] 提问与寒暄 → 不要问（它们本来就不需要对象）')
-  for (const text of ['这个插件怎么用？', '怎么配置 profile？', '好的，谢谢', '继续']) {
+  for (const text of ['这个插件怎么用？', '怎么配置 profile？', '好的，谢谢', '继续',
+    // 延续性输入：对象在上下文里（上一轮的产物），不缺信息。
+    '这个不对', '这里错了', '重来', '接着做']) {
     check('「' + text + '」不要问', needsClarify(text) === false, '判成了要问')
   }
 

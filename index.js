@@ -817,6 +817,15 @@ function needsClarification(raw) {
 
   if (classifyInput(s) !== 'c') return false
 
+  /*
+   * 延续性输入不问。
+   *
+   * 「这个不对」「重来」「继续」里的「这个」指的不是别处 —— 就是上一轮的产物，
+   * 对象在上下文里已经确定了。这类输入确实要动手，所以 classifyInput 判它是 c，
+   * 但它不缺信息，不该拦下来问「你说的是哪个」。
+   */
+  if (CONTINUATION.test(s)) return false
+
   // 有路径、文件名、命令、报错原文 —— 对象已经写清楚了。
   if (PATHY.test(s) || CODE_SPAN.test(s) || COMMANDY.test(s) || ERROR_TEXT.test(s)) return false
   // 有技术名词或约束 —— 对象或边界已经写清楚了。
