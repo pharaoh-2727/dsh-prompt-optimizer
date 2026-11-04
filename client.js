@@ -2916,6 +2916,16 @@ window.__ModuleLoader__.load({
         ? props.useInput((input) => input.draft)
         : ''
       const [draftTick, setDraftTick] = useState(0)
+      /*
+       * 卡片自己也要注入一次输入动作。
+       *
+       * 预览卡住在 conversation.input.dock 槽位，同样拿得到 standardProps。
+       * 光靠按钮组件注入的话，按钮不在场时（从设置页回来、会话头还没挂载）
+       * previewStore.inputActions 是 null —— 「替换草稿」和「发出去」都会静默失效。
+       */
+      useEffect(() => {
+        if (props.inputActions) previewStore.inputActions = props.inputActions
+      }, [props.inputActions])
       // 卡片高度：用户拖过就用用户的值；没拖过保持自适应（null）。
       const [height, setHeight] = useState(readPreviewHeight())
       // 卡片宽度：左右两侧各扩出多少 px；{left:0,right:0} = 未调整。

@@ -113,7 +113,23 @@ console.log('\n[4] 发出去之后卡片要收起来')
     '发送后卡片还开着')
 }
 
-console.log('\n[5] 追问状态下不给「发出去」')
+console.log('\n[5] 卡片自己要能拿到输入动作')
+{
+  /*
+   * 预览卡住在 conversation.input.dock 槽位，自己就拿得到 standardProps。
+   * 只靠按钮组件注入的话，按钮不在场时（从设置页回来、会话头还没挂载）
+   * inputActions 是 null —— 「替换草稿」和「发出去」都会静默失效，
+   * 而且不会报错，用户只会觉得「点了没反应」。
+   */
+  const cardStart = source.indexOf('function PreviewCard(props)')
+  const card = cardStart < 0 ? null : [source.slice(cardStart, cardStart + 2500)]
+  check('切得出 PreviewCard', card !== null, '找不到 PreviewCard')
+  check('PreviewCard 自己注入 inputActions',
+    card !== null && /previewStore\.inputActions\s*=\s*props\.inputActions/u.test(card[0]),
+    'PreviewCard 没自己注入')
+}
+
+console.log('\n[6] 追问状态下不给「发出去」')
 {
   /*
    * 追问时正文框里放的是原文。这时候点「发出去」等于把用户刚写的话原样发出去 ——
