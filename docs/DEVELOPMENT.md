@@ -7,7 +7,7 @@
 
 ```bash
 npm run check     # 两个入口文件的语法检查
-npm test          # 14 套离线测试，约 11 秒
+npm test          # 35 套离线测试，约 15 秒
 ```
 
 ## 测试
@@ -48,6 +48,9 @@ npm test          # 14 套离线测试，约 11 秒
 | `test-band-ceiling.cjs` | 提示词写的封顶字数与 `STYLE_BANDS.absMax` 一致；`band` 文案也带封顶值 |
 | `test-scene-context.cjs` | 场景约定随会话工作区与 `process.platform` 渲染；拿不到工作区时不编造、不留占位符 |
 | `test-brute-force.cjs` | 暴力测试：三档 × 13 类输入 × 五个入口，错误路径、异常路径、错误码一致性（210 项） |
+| `test-dsh-compat.cjs` | 盯住 DSH 兼容性：源码里不许再出现 `sessions.binding()` 与 `agent/request` 监听；`agent/pre-step` 要能记下路由；会话 id 带前缀与裸 uuid 两种写法都认 |
+| `test-manifest.cjs` | 盯住 manifest：`./icon`、`./locale/*.json` 两条导出都在、`files` 带上了图标与语言文件、中英两份语言文件键一致 |
+| `test-hooks-order.cjs` | 盯住 hook 顺序：顶格 `return` 之后不许再调 hook（静态）；会计数的假 React 把每个槽位渲染两帧比对 hook 数（动态）；设置页必须真渲染出「优化用的模型 / 改写力度 / 我的偏好」三段 |
 
 ### 测试怎么在没有 DSH 的情况下跑
 
@@ -155,7 +158,7 @@ gh release create vX.Y.Z --title "vX.Y.Z —— 一句话说清这版是什么" 
 ## 提交前自查
 
 - [ ] `npm run check` 通过
-- [ ] `npm test` 全绿（14 套）
+- [ ] `npm test` 全绿（35 套）
 - [ ] 没有把本机绝对路径写进源码或测试
 - [ ] 没有提交任何密钥（`.env`、`settings.json` 已在 `.gitignore` 里）
 - [ ] 用户可见的变化已经写进 `CHANGELOG.md`

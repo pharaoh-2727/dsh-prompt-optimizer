@@ -6,10 +6,19 @@
 这里的记录可以详细，写给维护者；**面向用户的发布说明**另写一份，
 格式见 `docs/releases/TEMPLATE.md`，只写升级了什么。
 
-## [未发布]
+## [0.1.5] - 2026-11-05
 
 ### 修复
 
+- **设置页只剩一行「优化设置加载出错」**：v0.1.4 加「我的偏好」时，两个 `useCallback`
+  写在了「设置还没读回来就 return」之后。首帧只跑 10 个 hook，等设置到了变成 12 个，
+  React 抛 `Rendered more hooks than during the previous render`，被 `safe()` 错误边界兜住，
+  整页就只剩那行红字 —— 从 v0.1.4 起，这个插件的设置页一直打不开。
+  现在把这两个 hook 提到提前 return 之前，函数体内自己判 `draft === null`。
+- **新增 `test-hooks-order.cjs`**：静态查「顶格 return 之后不许再调 hook」，动态用会计数的
+  假 React 把每个槽位渲染两帧、比对 hook 数，最后核对设置页真的渲染出了
+  「优化用的模型 / 改写力度 / 我的偏好」三段。用修复前的 client.js 跑这套会红，
+  报的正是真机上那句 `Rendered more hooks than during the previous render`。
 - **适配 DSH 0.2.2**：记模型的入口从已弃用的 `agent/request` 迁到 `agent/pre-step`。
   `agent/request` 在 0.2.x 标了 deprecated（"Do not add new listeners"），返回值还被
   `prepareRequest` 硬校验：provider/model 与本次 step 定下的 selection 不一致就直接抛错。
@@ -30,18 +39,6 @@
 - **两套防回归测试**：`test-dsh-compat.cjs` 盯着上面三处改动（源码里不许再出现
   `sessions.binding()` 与 `agent/request` 监听；pre-step 要能记下路由；会话 id 两种写法都认），
   `test-manifest.cjs` 盯着 manifest 的导出与本地化资源。
-
-### 修复（设置页打不开）
-
-- **设置页只剩一行「优化设置加载出错」**：v0.1.4 加「我的偏好」时，两个 `useCallback`
-  写在了「设置还没读回来就 return」之后。首帧只跑 10 个 hook，等设置到了变成 12 个，
-  React 抛 `Rendered more hooks than during the previous render`，被 `safe()` 错误边界兜住，
-  整页就只剩那行红字 —— 从 v0.1.4 起，这个插件的设置页一直打不开。
-  现在把这两个 hook 提到提前 return 之前，函数体内自己判 `draft === null`。
-- **新增 `test-hooks-order.cjs`**：静态查「顶格 return 之后不许再调 hook」，动态用会计数的
-  假 React 把每个槽位渲染两帧、比对 hook 数，最后核对设置页真的渲染出了
-  「优化用的模型 / 改写力度 / 我的偏好」三段。用修复前的 client.js 跑这套会红，
-  报的正是真机上那句 `Rendered more hooks than during the previous render`。
 
 ## [0.1.4] - 2026-11-04
 
