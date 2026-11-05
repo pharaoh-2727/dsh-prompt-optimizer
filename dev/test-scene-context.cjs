@@ -54,7 +54,8 @@ async function loadPlugin(style) {
 }
 
 /**
- * 假 ctx。sessions.binding(sessionId) 按需返回带 cwd 的会话，
+ * 假 ctx。宿主 sessions 服务没有 binding()（那是浏览器侧的方法），
+ * 这里按真实契约提供 agents.get(sessionId).session —— 带 cwd 的会话，
  * 模拟宿主在真实环境里能提供的那一份信息。
  */
 function makeCtx(sessionCwd) {
@@ -84,11 +85,16 @@ function makeCtx(sessionCwd) {
     sessions: sessionCwd === undefined
       ? undefined
       : {
-        binding: (sessionId) => ({
+        get: (sessionId) => ({ id: sessionId, header: { cwd: sessionCwd } }),
+      },
+    agents: sessionCwd === undefined
+      ? undefined
+      : {
+        get: (sessionId) => ({
+          id: sessionId,
           session: { id: sessionId, header: { cwd: sessionCwd } },
         }),
       },
-    agents: undefined,
     inject() {},
     provide() {},
     logger: { warn() {}, info() {}, debug() {}, error() {} },

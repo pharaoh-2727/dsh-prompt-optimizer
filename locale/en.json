@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Prompt Optimizer",
+    "description": "Rewrite a rough draft into a prompt DeepSeek Harness can follow: three styles, a length gate, and actionable fallbacks when a run fails. One engine behind six entry points."
+  }
+}

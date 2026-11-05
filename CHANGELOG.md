@@ -8,6 +8,29 @@
 
 ## [未发布]
 
+### 修复
+
+- **适配 DSH 0.2.2**：记模型的入口从已弃用的 `agent/request` 迁到 `agent/pre-step`。
+  `agent/request` 在 0.2.x 标了 deprecated（"Do not add new listeners"），返回值还被
+  `prepareRequest` 硬校验：provider/model 与本次 step 定下的 selection 不一致就直接抛错。
+  `agent/pre-step` 的 payload 自带 agent 与 modelSelection，只要求把 decision 原样传回。
+- **自动档不再按错的 id 找会话**：宿主记的是 `session-<uuid>` 这种带前缀的 id，浏览器侧
+  传进来的是裸 uuid。以前两边的键对不上，`sessionKnown` 永远是 false、「跟随会话实际模型」
+  静默失效（看起来跟通了没区别）。现在两种写法都认。
+- **取会话改用现行 API**：`ctx.sessions.binding()` 在宿主不存在（那是浏览器侧
+  `dsh-api-session-controller` 的方法），两处调用是死分支。改用 `agents.get(id).session`，
+  取不到再退到 `sessions.get(id)`；工作区仍按「工作目录服务 → header.cwd → 部署默认目录」
+  三级兜底，都没有就不给值。
+
+### 新增
+
+- **插件有了图标与标题**：补 `icon.svg`、`locale/zh.json`、`locale/en.json`，以及
+  `./icon`、`./locale/*.json` 两条导出。缺这两样不会报错，但插件页只能显示默认图，
+  标题和描述也拿不到。
+- **两套防回归测试**：`test-dsh-compat.cjs` 盯着上面三处改动（源码里不许再出现
+  `sessions.binding()` 与 `agent/request` 监听；pre-step 要能记下路由；会话 id 两种写法都认），
+  `test-manifest.cjs` 盯着 manifest 的导出与本地化资源。
+
 ## [0.1.4] - 2026-11-04
 
 ### 新增

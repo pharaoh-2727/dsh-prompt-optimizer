@@ -14,7 +14,7 @@
  * 服务给插件用。三者共用同一条实现，所以从哪个入口进来结果都一样。
  *
  * 模型选择有三档：
- *   - auto（默认）：跟随当前对话实际使用的模型，由 `agent/request` 事件记录；
+ *   - auto（默认）：跟随当前对话实际使用的模型，由 `agent/pre-step` 事件记录；
  *   - manual：用户指定的 provider/model；
  *   - free：优先走免费通道（需自备 DSH_FREE_CHANNEL_API_KEY），不可用时静默回退到当前对话的模型。
  *
@@ -540,13 +540,46 @@ const STYLE_IDS = new Set(STYLE_ITEMS.map((item) => item.id).concat('custom'))
  *
  * 为什么需要它：HTTP 路由里拿不到「当前对话正在用的模型」——
  *   `agents.currentInitiator()` 只在模型调用链里有效；
- *   `sessions.binding()` 在浏览器上下文不可用；
+ *   宿主 `sessions` 服务没有 binding()（那是浏览器侧会话控制器的方法）；
  *   模型选择器的状态在 slot inject 里，插件读不到。
  *
- * 但有一处能拿到：**模型发起请求时会经过 `agent/request` 事件**，
- * 那里带着本次调用的完整路由。把它按会话记下来即可。
+ * 但有一处能拿到：**每个 step 开始前都会经过 `agent/pre-step` 事件**，
+ * 那里带着本次调用定下的 modelSelection。把它按会话记下来即可。
+ *
+ * 键的写法两边不同（宿主是 `session-<uuid>`，浏览器 slot 给的是裸 uuid），
+ * 所以下面用 sessionKeys() 统一成「两种都记、两种都查」。
  */
 const routeBySession = new Map()
+
+/**
+ * 把一个会话 id 归一成宿主记的键。
+ *
+ * 为什么需要归一：宿主侧 agent 的 id 是 `session-<uuid>`（`Agent id ... does not
+ * match session id` 那条校验说明了 agent id 就是 session id），而浏览器侧
+ * slot 的 `props.sessionId` 传进来的是裸 uuid。两边直接拿同一个字符串当键
+ * 会对不上 —— 结果是 pre-step 记了一堆 `session-xxx`，HTTP 路由却去查 `xxx`，
+ * `sessionKnown` 永远是 false，「跟随会话实际模型」静默失效。
+ *
+ * 两种写法都认：带前缀的去掉前缀，裸的补不回前缀，所以查询时两种都试。
+ */
+function sessionKeys(id) {
+  const raw = typeof id === 'string' ? id.trim() : ''
+  if (raw.length === 0) return []
+  const bare = raw.startsWith('session-') ? raw.slice('session-'.length) : raw
+  const keys = [raw]
+  if (bare !== raw) keys.push(bare)
+  else keys.push('session-' + raw)
+  return keys
+}
+
+/** 按会话 id 查记下的路由；两种写法都试，先命中的算。 */
+function lookupRoute(id) {
+  for (const key of sessionKeys(id)) {
+    const found = routeBySession.get(key)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
 
 /** 当前设置（内存副本，写盘后更新）。 */
 let settings = { ...DEFAULT_SETTINGS }
@@ -1490,22 +1523,32 @@ export function apply(ctx) {
   /**
    * 记录每个会话实际使用的模型（供 auto 档使用）。
    *
-   * `agent/request` 是 waterfall：必须 return next()，否则截断整条请求链。
+   * 用 `agent/pre-step` 而不是 `agent/request`：后者在 dsh 0.2.x 已标记
+   * deprecated（"Do not add new listeners"），且返回值被宿主硬校验 —— 只要
+   * provider/model 与 prepareRequest 里定下的 selection 不一致就直接抛错。
+   * `agent/pre-step` 是未弃用的官方入口：payload 自带 agent 与本次 step 的
+   * modelSelection，正是这里要记的那一项，而且只要求把 decision 原样传回。
+   *
+   * 两者都是 waterfall：必须 return next()，否则截断整条链路。
    */
-  ctx.on('agent/request', async (payload, next) => {
-    const config = await next()
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const decision = await next()
     const sessionId = payload?.agent?.session?.id ?? payload?.agent?.id
+    const selection = payload?.modelSelection
     if (sessionId !== undefined
-      && typeof config?.provider === 'string'
-      && typeof config?.model === 'string') {
-      routeBySession.set(String(sessionId), { provider: config.provider, model: config.model })
+      && typeof selection?.provider === 'string'
+      && typeof selection?.model === 'string') {
+      const route = { provider: selection.provider, model: selection.model }
+      // 每个别名都记一份，查询时就不用猜对方用的是哪一种写法。
+      for (const key of sessionKeys(String(sessionId))) routeBySession.set(key, route)
     }
-    return config
+    return decision
   })
 
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id ?? agent?.id
-    if (sessionId !== undefined) routeBySession.delete(String(sessionId))
+    if (sessionId === undefined) return
+    for (const key of sessionKeys(String(sessionId))) routeBySession.delete(key)
   })
 
   /** 列出所有可选模型，供手动选择。取不到就返回空列表，不阻塞设置页。 */
@@ -1546,7 +1589,7 @@ export function apply(ctx) {
 
     // auto：优先用这个会话实际在跑的模型。
     if (sessionId.length > 0) {
-      const remembered = routeBySession.get(sessionId)
+      const remembered = lookupRoute(sessionId)
       if (remembered !== undefined) return { ...remembered, source: 'session' }
     }
 
@@ -1714,7 +1757,7 @@ export function apply(ctx) {
     let agent = options?.agent
     if (agent === undefined && sessionId.length > 0) {
       try {
-        agent = ctx.sessions?.binding?.(sessionId)?.agent
+        agent = ctx.agents?.get?.(sessionId)
       } catch {
         /* 忽略 */
       }
@@ -1772,7 +1815,15 @@ export function apply(ctx) {
       return ''
     }
 
-    /** 拿到会话对象：优先用调用方给的 agent，其次问宿主要这个 sessionId 的绑定。 */
+    /**
+     * 拿到会话对象：优先用调用方给的 agent，其次按 sessionId 向宿主查。
+     *
+     * 宿主没有 `sessions.binding()`（那是浏览器侧 dsh-api-session-controller 的
+     * 方法，Host 的 sessions 服务只有 registerMessageProjection / create /
+     * prepare / enter / announce / flush / get / list / fork）。这里用
+     * `agents.get(id).session`（agent 与 session 共用一个 id），再退到
+     * `sessions.get(id)`。两条都是现行 API，取不到就返回 undefined。
+     */
     function sessionOf(liveAgent, liveSessionId) {
       try {
         const fromAgent = liveAgent?.session
@@ -1780,12 +1831,19 @@ export function apply(ctx) {
       } catch {
         /* 忽略 */
       }
+      if (liveSessionId.length === 0) return undefined
       try {
-        const binding = liveSessionId.length > 0 ? ctx.sessions?.binding?.(liveSessionId) : undefined
-        return binding?.session
+        const live = ctx.agents?.get?.(liveSessionId)
+        if (live?.session !== undefined && live?.session !== null) return live.session
       } catch {
         /* 忽略 */
       }
+      try {
+        return ctx.sessions?.get?.(liveSessionId)
+      } catch {
+        /* 忽略 */
+      }
+      return undefined
     }
 
     /**
@@ -2112,11 +2170,11 @@ export function apply(ctx) {
         const models = await listAllModels()
 
         // 设置页带上当前会话 id 时，就能算出「自动模式此刻会真正调用哪个模型」。
-        // 这个值由代码推导（读 agent/request 记录与配置），**不是模型自述**，
+        // 这个值由代码推导（读 agent/pre-step 记录与配置），**不是模型自述**，
         // 因此可以用来核实路由，而不受模型"自称 GPT"这类训练数据错觉的影响。
         const url = new URL(req.url ?? '/', 'http://localhost')
         const sessionId = url.searchParams.get('sessionId') ?? ''
-        const knownSession = sessionId.length > 0 && routeBySession.has(sessionId)
+        const knownSession = lookupRoute(sessionId) !== undefined
 
         res.writeHead(200, JSON_HEADERS)
         res.end(JSON.stringify({

@@ -99,10 +99,13 @@ function makeCtx(options) {
     },
     llm: { listProviders: () => [], listModels: async () => [], stream: runStream },
     get: () => undefined,
+    // 按宿主真实契约：sessions.get(id) 与会话对象；agents.get(id) 与 agent。
     sessions: workspace === undefined
       ? undefined
-      : { binding: (id) => ({ session: { id, header: { cwd: workspace } } }) },
-    agents: undefined,
+      : { get: (id) => ({ id, header: { cwd: workspace } }) },
+    agents: workspace === undefined
+      ? undefined
+      : { get: (id) => ({ id, session: { id, header: { cwd: workspace } } }) },
     workingDirectory: undefined,
     inject(list, callback) {
       const target = Array.isArray(list) ? list : Object.keys(list)

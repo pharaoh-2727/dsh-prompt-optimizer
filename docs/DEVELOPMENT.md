@@ -16,7 +16,7 @@ npm test          # 14 套离线测试，约 11 秒
 
 | 测试 | 覆盖什么 |
 |---|---|
-| `smoke-host.cjs` | 模块能 import、路由注册正确、`agent/request` 记路由、设置路由回得合理、命令/工具/服务返回同一份文本 |
+| `smoke-host.cjs` | 模块能 import、路由注册正确、`agent/pre-step` 记路由、设置路由回得合理、命令/工具/服务返回同一份文本 |
 | `test-bands.cjs` | 三档长度公式与源码常量一致、三档上限严格递增、每档 prompt 写明了上限 |
 | `test-band-correction.cjs` | 超长 → 带修正指令重试（`adjusted='trimmed'`）；过短 → 补写重试（`'expanded'`）；一次到位不重试 |
 | `test-band-overshoot.cjs` | 重试稿「从超长变成过短」不许被记成收敛成功；同一方向上变短仍接受；落在区间内的照常接受 |

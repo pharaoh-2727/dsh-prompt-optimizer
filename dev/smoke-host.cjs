@@ -2,7 +2,7 @@
  * smoke-host.cjs —— 用一个最小假 ctx 跑一遍 host 半区，验证：
  *   1. 模块能被 import（语法与顶层代码无误）
  *   2. apply(ctx) 注册的三个路由路径正确
- *   3. agent/request waterfall 会把 config 记进 routeBySession
+ *   3. agent/pre-step waterfall 会把本次 step 的 modelSelection 记进 routeBySession
  *   4. 读取 settings 路由能返回合理的 JSON
  */
 const { pathToFileURL } = require('node:url')
@@ -154,15 +154,19 @@ async function main() {
   if (typeof tool.output.render !== 'function') throw new Error('tool output.render must be a function')
   if (tool.output.schema.type !== 'object') throw new Error('tool output.schema must be an object schema')
 
-  // agent/request waterfall
-  const req = listeners['agent/request'][0]
+  // agent/pre-step waterfall（宿主只在 payload 里给 modelSelection，不给 config）
+  const req = listeners['agent/pre-step'][0]
   let nextCalled = false
-  const config = await req(
-    { agent: { session: { id: 'smoke-session-1' } } },
-    async () => { nextCalled = true; return { provider: 'workbuddy', model: 'deepseek-v4.1-flash' } },
+  const decision = await req(
+    {
+      agent: { id: 'smoke-session-1', session: { id: 'smoke-session-1' } },
+      modelSelection: { provider: 'workbuddy', model: 'deepseek-v4.1-flash' },
+    },
+    async () => { nextCalled = true; return { kind: 'enter', messages: [] } },
   )
-  console.log('waterfall   : next called =', nextCalled, '| returned provider/model =', config.provider, '/', config.model)
-  if (!nextCalled) throw new Error('agent/request did not call next()')
+  console.log('waterfall   : next called =', nextCalled, '| returned decision =', decision.kind)
+  if (!nextCalled) throw new Error('agent/pre-step did not call next()')
+  if (decision?.kind !== 'enter') throw new Error('agent/pre-step must return the next() decision')
 
   // settings GET
   const res = {

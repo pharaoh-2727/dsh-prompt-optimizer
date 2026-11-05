@@ -237,7 +237,7 @@ const STYLE_BANDS = {
 | 状态 | 位置 | 说明 |
 |---|---|---|
 | 设置（档位、模型、自定义提示词） | `~/.dsh/prompt-optimizer/settings.json` | 宿主读写，跨会话有效 |
-| 会话实际路由 | 内存 `routeBySession` Map | 由 `agent/request` 事件填充，`agent/disposed` 时清理 |
+| 会话实际路由 | 内存 `routeBySession` Map | 由 `agent/pre-step` 事件填充，`agent/disposed` 时清理 |
 | 进行中的请求 | 内存 `activeJobs` Map | `requestId → AbortController` |
 | 预览卡尺寸 | localStorage `dsho.preview.body-height` / `body-width` | 只在本浏览器有效 |
 | 历史版本 | localStorage `dsho.preview.history` | 最多 20 条，写不进去时自动砍半 |

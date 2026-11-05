@@ -51,6 +51,8 @@ const ORDER = [
   'test-result-stability.cjs',
   'test-dock-behaviour.cjs',
   'test-scene-context.cjs',
+  'test-dsh-compat.cjs',
+  'test-manifest.cjs',
   'test-brute-force.cjs',
 ]
 
