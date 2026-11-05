@@ -2706,6 +2706,34 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      /*
+       * 偏好：读写都走同一个设置接口。
+       *
+       * 用 draft.preferences（而不是 data.settings.preferences）：
+       * 用户刚加完一条、还没收到回包时，界面要立刻反映出来。
+       * persist 里已经做了 setDraft，所以这里只要把新数组交过去。
+       *
+       * 位置很要紧：这两个 useCallback 必须待在下面的提前 return **之前**。
+       * React 要求同一个组件每次渲染调用同样数量的 hook。早先它们写在
+       * 「还没读到设置就 return」之后，首帧只跑 10 个 hook、设置一到变成 12 个，
+       * 于是抛 "Rendered more hooks than during the previous render"，
+       * 被 safe() 错误边界兜住 —— 整页只剩一行「优化设置加载出错」。
+       * draft 还可能是 null（首帧就是），所以函数体内要自己判空。
+       */
+      const preferences = draft !== null && Array.isArray(draft.preferences) ? draft.preferences : []
+      const savePreferences = useCallback(async (next) => {
+        if (draft === null) return
+        await persist({ ...draft, preferences: next })
+      }, [draft, persist])
+      const addPreference = useCallback(async () => {
+        if (draft === null) return
+        const value = prefDraft.trim()
+        if (value.length === 0) return
+        if (preferences.length >= 20) return
+        setPrefDraft('')
+        await persist({ ...draft, preferences: [...preferences, value] })
+      }, [prefDraft, preferences, draft, persist])
+
       if (error !== null) {
         return h('div', { className: 'dsho-page' },
           h('style', null, PAGE_CSS),
@@ -2718,25 +2746,6 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsho-status' }, '正在读取…')
         )
       }
-
-      /*
-       * 偏好：读写都走同一个设置接口。
-       *
-       * 用 draft.preferences（而不是 data.settings.preferences）：
-       * 用户刚加完一条、还没收到回包时，界面要立刻反映出来。
-       * persist 里已经做了 setDraft，所以这里只要把新数组交过去。
-       */
-      const preferences = Array.isArray(draft.preferences) ? draft.preferences : []
-      const savePreferences = useCallback(async (next) => {
-        await persist({ ...draft, preferences: next })
-      }, [draft, persist])
-      const addPreference = useCallback(async () => {
-        const value = prefDraft.trim()
-        if (value.length === 0) return
-        if (preferences.length >= 20) return
-        setPrefDraft('')
-        await persist({ ...draft, preferences: [...preferences, value] })
-      }, [prefDraft, preferences, draft, persist])
 
       const styles = data.styles ?? []
       const models = data.models ?? []

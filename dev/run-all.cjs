@@ -35,6 +35,7 @@ const ORDER = [
   'test-clarify-brute.cjs',
   'test-preferences.cjs',
   'test-preferences-ui.cjs',
+  'test-hooks-order.cjs',
   'test-preferences-brute.cjs',
   'test-fallback-options.cjs',
   'test-fallback-ui.cjs',
